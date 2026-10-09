@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TchouTchou — local LLM switchyard for macOS</title>
+<meta name="description" content="One native Mac app to see every local model, and one OpenAI-compatible endpoint that routes to Ollama, LM Studio, MLX and OpenRouter.">
+<style>
+  :root { --bg:#ffffff; --fg:#1d1d1f; --muted:#6e6e73; --card:#f5f5f7; --accent:#0a6cff; --line:#e5e5ea; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111113; --fg:#f5f5f7; --muted:#a1a1a6; --card:#1c1c1f; --accent:#4c9bff; --line:#2c2c30; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:17px/1.55 -apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif; }
+  main { max-width:960px; margin:0 auto; padding:64px 20px 80px; }
+  h1 { font-size:clamp(2.4rem,6vw,3.6rem); line-height:1.05; margin:0 0 14px; letter-spacing:-.02em; }
+  .lead { font-size:1.25rem; color:var(--muted); max-width:640px; margin:0 0 28px; }
+  .cta a { display:inline-block; padding:10px 20px; border-radius:10px; text-decoration:none; font-weight:600; margin:0 10px 10px 0; }
+  .primary { background:var(--accent); color:#fff; }
+  .secondary { border:1px solid var(--line); color:var(--fg); }
+  img.shot { width:100%; border-radius:12px; border:1px solid var(--line); margin:40px 0; box-shadow:0 12px 40px rgba(0,0,0,.18); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; }
+  .card { background:var(--card); border-radius:14px; padding:20px; }
+  .card h3 { margin:0 0 6px; font-size:1.05rem; }
+  .card p { margin:0; color:var(--muted); font-size:.95rem; }
+  h2 { margin:56px 0 16px; font-size:1.6rem; }
+  pre { background:var(--card); padding:16px; border-radius:12px; overflow-x:auto; font-size:.9rem; }
+  footer { margin-top:56px; color:var(--muted); font-size:.9rem; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>TchouTchou 🚂</h1>
+  <p class="lead">A local LLM switchyard for macOS. See every model on your Mac, and send each request to the right engine through one OpenAI-compatible endpoint.</p>
+  <div class="cta">
+    <a class="primary" href="https://github.com/Hugo291/TchouTchou">View on GitHub</a>
+    <a class="secondary" href="https://github.com/Hugo291/TchouTchou#build-and-install">Build it</a>
+  </div>
+
+  <img class="shot" src="screenshot.jpg" alt="TchouTchou model library window">
+
+  <div class="grid">
+    <div class="card"><h3>Library</h3><p>Ollama and LM Studio models in one table: size, quantization, capabilities. Click to copy an id.</p></div>
+    <div class="card"><h3>In memory</h3><p>What is loaded right now, RAM use, activity and prompt progress when the engine exposes it.</p></div>
+    <div class="card"><h3>Discover</h3><p>Search Ollama, Hugging Face and LM Studio catalogs. Filter by capability, sort by popularity or newest.</p></div>
+    <div class="card"><h3>Endpoint</h3><p>One address, <code>127.0.0.1:41235/v1</code>. Routes by model to Ollama, LM Studio, MLX and free OpenRouter models.</p></div>
+  </div>
+
+  <h2>Use it</h2>
+<pre>make test
+make install
+open /Applications/TchouTchou.app
+
+curl http://127.0.0.1:41235/v1/models</pre>
+  <p>Requires macOS 14+ and at least one of Ollama, LM Studio or an MLX server. The endpoint listens on loopback only.</p>
+
+  <footer>MIT licensed · <a href="https://github.com/Hugo291/TchouTchou">Source</a> · <a href="https://github.com/Hugo291/TchouTchou/blob/main/README.fr.md">Français</a></footer>
+</main>
+</body>
+</html>
