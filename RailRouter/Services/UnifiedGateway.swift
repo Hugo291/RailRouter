@@ -37,11 +37,11 @@ final class UnifiedGateway: @unchecked Sendable {
     }
 
     /// Test seam: an ephemeral session with URLProtocol fixtures; never a model call.
-    init(port: UInt16, session: URLSession, telemetryFile: URL?) {
+    init(port: UInt16, session: URLSession, telemetryFile: URL?, providerEnvironment: [String: String] = [:]) {
         self.port = port
         self.session = session
         openAICatalogFile = nil
-        providerEnvironment = [:]
+        self.providerEnvironment = providerEnvironment
         providerKeyFile = URL(fileURLWithPath: "/nonexistent/provider-keys.json")
         mlxActivityFile = nil // fixtures must never refresh the real model watchdog
         telemetry = GatewayTelemetry(file: telemetryFile)
@@ -155,6 +155,11 @@ final class UnifiedGateway: @unchecked Sendable {
                     rewritten["model"] = route.model
                     body = try JSONSerialization.data(withJSONObject: rewritten)
                 }
+                // Keyed providers only speak chat/completions: the Responses request is translated, the stream translated back below.
+                let bridged = request.path == "/v1/responses" ? CloudProviders.generic(id: route.source) : nil
+                if let bridged, let upstreamModel = route.model {
+                    body = try JSONSerialization.data(withJSONObject: GatewayResponsesBridge.chatBody(object, provider: bridged, model: upstreamModel))
+                }
                 if !["openai", "openrouter", "alibaba"].contains(route.source), CloudProviders.generic(id: route.source) == nil,
                    let raw = route.model {
                     let source = route.source
@@ -163,7 +168,7 @@ final class UnifiedGateway: @unchecked Sendable {
                     try await residencyGate.acquire(id: peer.id, source: source, model: raw, residency: residency)
                 }
                 defer { Task { await residencyGate.release(peer.id) } }
-                var upstream = URLRequest(url: route.url)
+                var upstream = URLRequest(url: bridged.map { URL(string: $0.baseURL + "/chat/completions")! } ?? route.url)
                 upstream.httpMethod = "POST"
                 upstream.httpBody = body
                 for (name, value) in Self.upstreamHeaders(request.headers, source: route.source) {
@@ -202,23 +207,50 @@ final class UnifiedGateway: @unchecked Sendable {
                 guard let response = response as? HTTPURLResponse else { throw GatewayFailure(502, "Invalid upstream response") }
                 let sse = response.value(forHTTPHeaderField: "Content-Type")?.lowercased().contains("text/event-stream") == true
                 var usage = GatewayUsageParser(sse: sse)
-                try await peer.responseHead(response, allowCredentials: route.source == "openai")
+                if let bridged, response.statusCode >= 300 {
+                    var raw = Data()
+                    for try await byte in bytes where raw.count < 64 * 1024 { raw.append(byte) }
+                    throw GatewayFailure(response.statusCode, bridged.name + ": " + GatewayResponsesBridge.errorMessage(raw))
+                }
+                if bridged == nil { try await peer.responseHead(response, allowCredentials: route.source == "openai") }
                 record?.status = response.statusCode
                 record?.phase = "generating" // proxy phase: headers received, body forwarding starts
                 await telemetry.update(record!)
-                var chunk = Data()
-                for try await byte in bytes {
-                    try Task.checkCancellation()
-                    usage.ingest(byte)
-                    chunk.append(byte)
-                    // SSE flushes each line promptly, including [DONE]; other bodies
-                    // have a fixed 16 KiB buffer. Each send completes before reading on.
-                    if chunk.count >= 16 * 1024 || (sse && byte == 10) {
-                        try await peer.send(chunk)
-                        chunk.removeAll(keepingCapacity: true)
+                if let bridged {
+                    var stream = GatewayResponsesBridge.Stream(model: model, tools: object["tools"])
+                    let streaming = object["stream"] as? Bool ?? false
+                    if streaming { try await peer.eventStreamHead() }
+                    var line = Data()
+                    for try await byte in bytes {
+                        try Task.checkCancellation()
+                        usage.ingest(byte)
+                        if byte != 10 {
+                            if line.count < GatewayHTTPRequest.bodyLimit { line.append(byte) }
+                            continue
+                        }
+                        let events = stream.ingest(line: line)
+                        line.removeAll(keepingCapacity: true)
+                        if streaming { for event in events { try await peer.send(event) } }
                     }
+                    let events = stream.ingest(line: line) + stream.finish()
+                    if streaming { for event in events { try await peer.send(event) } }
+                    else if let failure = stream.failure { throw GatewayFailure(502, bridged.name + ": " + failure) }
+                    else { try await peer.json(stream.response) }
+                } else {
+                    var chunk = Data()
+                    for try await byte in bytes {
+                        try Task.checkCancellation()
+                        usage.ingest(byte)
+                        chunk.append(byte)
+                        // SSE flushes each line promptly, including [DONE]; other bodies
+                        // have a fixed 16 KiB buffer. Each send completes before reading on.
+                        if chunk.count >= 16 * 1024 || (sse && byte == 10) {
+                            try await peer.send(chunk)
+                            chunk.removeAll(keepingCapacity: true)
+                        }
+                    }
+                    if !chunk.isEmpty { try await peer.send(chunk) }
                 }
-                if !chunk.isEmpty { try await peer.send(chunk) }
                 usage.finish()
                 if let reported = usage.reportedModel { record?.upstreamModel = reported }
                 record?.promptTokens = usage.promptTokens
@@ -676,6 +708,11 @@ private final class GatewayPeer: @unchecked Sendable {
         text += "\r\n"
         headersSent = true
         try await send(Data(text.utf8))
+    }
+    /// Head of a stream the gateway writes itself (Responses events rebuilt from chat/completions).
+    func eventStreamHead() async throws {
+        headersSent = true
+        try await send(Data("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\n".utf8))
     }
     func finish() async {
         // Send a FIN after all contentProcessed callbacks, then release the peer.

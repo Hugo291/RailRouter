@@ -282,6 +282,27 @@ struct UnifiedGatewayTests {
         check(try await call("/health").1.statusCode == 200, "Stop/start lifecycle")
         do { try UnifiedGateway(port: 41234, session: upstreamSession, telemetryFile: nil).start(); check(false, "Reserved port") }
         catch { check((error as? GatewayFailure)?.status == 400, "Existing router port cannot be bound") }
+
+        // Keyed provider on /v1/responses: translated to chat/completions upstream, Responses events downstream.
+        gateway.stop()
+        let keyed = UnifiedGateway(port: port, session: upstreamSession, telemetryFile: nil, providerEnvironment: ["DEEPSEEK_API_KEY": "bridge-key"])
+        try keyed.start()
+        defer { keyed.stop() }
+        let bridged = try await call("/v1/responses", body: Data(#"{"model":"deepseek/deepseek-chat","stream":true,"instructions":"sys","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}"#.utf8))
+        let bridgedText = String(decoding: bridged.0, as: UTF8.self)
+        check(bridged.1.statusCode == 200 && bridged.1.value(forHTTPHeaderField: "Content-Type") == "text/event-stream"
+              && bridgedText.contains("event: response.output_text.delta") && bridgedText.contains(#""delta":"output-secret""#)
+              && bridgedText.contains("event: response.completed") && bridgedText.contains(#""input_tokens":12"#) && !bridgedText.contains("[DONE]"),
+              "Keyed provider Responses stream is re-encoded from chat/completions")
+        let bridgedUpstream = GatewayMockProtocol.captured().last { $0.url?.host == "api.deepseek.com" && $0.url?.path == "/v1/chat/completions" }
+        let bridgedJSON = try JSONSerialization.jsonObject(with: GatewayMockProtocol.body(bridgedUpstream ?? URLRequest(url: URL(string: "x:")!))) as? [String: Any]
+        check(bridgedUpstream?.value(forHTTPHeaderField: "Authorization") == "Bearer bridge-key" && bridgedJSON?["model"] as? String == "deepseek-chat"
+              && (bridgedJSON?["messages"] as? [[String: Any]])?.map { $0["role"] as? String } == ["system", "user"] && bridgedJSON?["input"] == nil,
+              "Bridge sends chat messages with the provider key to the provider host")
+        let unary = try await call("/v1/responses", body: Data(#"{"model":"deepseek/deepseek-chat","input":"hi"}"#.utf8))
+        let unaryJSON = try JSONSerialization.jsonObject(with: unary.0) as? [String: Any]
+        check(unary.1.statusCode == 200 && unaryJSON?["object"] as? String == "response" && unaryJSON?["status"] as? String == "completed"
+              && String(decoding: unary.0, as: UTF8.self).contains("output-secret"), "Non-streaming bridged Responses returns one response object")
         return (checks, failures)
     }
 }

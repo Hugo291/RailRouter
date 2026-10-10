@@ -22,7 +22,8 @@ func runTestSuite() -> Bool {
         ("LMStudioService", LMStudioServiceTests.self),
         ("OllamaService", OllamaServiceTests.self),
         ("CodexProbe", CodexProbeTests.self),
-        ("CloudProviders", CloudProvidersTests.self)
+        ("CloudProviders", CloudProvidersTests.self),
+        ("ResponsesBridge", ResponsesBridgeTests.self)
     ]
 
     for (suiteName, cls) in suites {

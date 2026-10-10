@@ -158,7 +158,8 @@ enum CloudProviders {
     static func models(for provider: CloudProvider, entries: [[String: Any]]) -> [LLMModel] {
         entries.compactMap { item in
             guard let raw = item["id"] as? String else { return nil }
-            return LLMModel(id: provider.id + "/" + raw, name: raw,
+            // Gemini liste `models/gemini-…` : le préfixe reste dans l'identifiant (accepté par Google), pas dans le nom affiché.
+            return LLMModel(id: provider.id + "/" + raw, name: raw.hasPrefix("models/") ? String(raw.dropFirst(7)) : raw,
                             parameters: OpenRouterService.parameterLabel(id: raw, description: nil),
                             quantization: nil, sizeBytes: 0, capabilities: AlibabaService.capabilities(id: raw),
                             modified: (item["created"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) },
