@@ -33,7 +33,7 @@
   <p class="lead">A local LLM switchyard for macOS. See every model on your Mac, and send each request to the right engine through one OpenAI-compatible endpoint.</p>
   <div class="cta">
     <a class="primary" href="https://github.com/Hugo291/RailRouter">View on GitHub</a>
-    <a class="secondary" href="https://github.com/Hugo291/RailRouter#build-and-install">Build it</a>
+    <a class="secondary" href="https://github.com/Hugo291/RailRouter#quick-install">Install it</a>
   </div>
 
   <img class="shot" src="screenshot.jpg" alt="RailRouter model library window">
@@ -44,6 +44,10 @@
     <div class="card"><h3>Discover</h3><p>Search Ollama, Hugging Face and LM Studio catalogs. Filter by capability, sort by popularity or newest.</p></div>
     <div class="card"><h3>Endpoint</h3><p>One address, <code>127.0.0.1:41235/v1</code>. Routes by model to Ollama, LM Studio, MLX and free OpenRouter models.</p></div>
   </div>
+
+  <h2>Quick install</h2>
+<pre>curl -fsSL https://raw.githubusercontent.com/Hugo291/RailRouter/main/install.sh | bash</pre>
+  <p>Clones, builds and copies RailRouter to <code>/Applications</code>. Needs the Swift toolchain (<code>xcode-select --install</code>).</p>
 
   <h2>Use it</h2>
 <pre>make test

@@ -27,6 +27,15 @@ L'endpoint n'écoute que sur la boucle locale et continue après fermeture de la
 
 macOS 14+, toolchain Swift 5.9+, et au moins un moteur : Ollama, LM Studio ou un serveur MLX.
 
+## Installation rapide
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Hugo291/RailRouter/main/install.sh | bash
+```
+
+Clone le dépôt dans un dossier temporaire, compile, copie l'app dans `/Applications` et l'ouvre.
+Nécessite la toolchain Swift (`xcode-select --install`).
+
 ## Construire et installer
 
 ```sh

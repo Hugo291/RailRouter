@@ -31,6 +31,15 @@ The endpoint listens on loopback only and keeps running after the window is clos
 - macOS 14 or later, Swift 5.9+ toolchain (Xcode or Command Line Tools)
 - At least one of: Ollama, LM Studio, an MLX server
 
+## Quick install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Hugo291/RailRouter/main/install.sh | bash
+```
+
+Clones the repository to a temporary folder, builds, copies the app to `/Applications` and opens it.
+Needs the Swift toolchain (`xcode-select --install`).
+
 ## Build and install
 
 ```sh
