@@ -1,12 +1,12 @@
-# TchouTchou 🚂
+# RailRouter 🚂
 
 **A local LLM switchyard for macOS.** One native app to see every model on your Mac
 (Ollama, LM Studio, MLX), and one OpenAI-compatible endpoint that routes each request
 to the right engine.
 
-[Français](README.fr.md) · [Project page](https://hugo291.github.io/TchouTchou/)
+[Français](README.fr.md) · [Project page](https://hugo291.github.io/RailRouter/)
 
-![TchouTchou — model library](docs/screenshot.jpg)
+![RailRouter — model library](docs/screenshot.jpg)
 
 ## What it does
 
@@ -21,9 +21,10 @@ to the right engine.
   - Ollama (`11434`), LM Studio (`1234`), a running MLX server (`8090`)
   - Ollama cloud models, and free [OpenRouter](https://openrouter.ai) models (`:free`)
   - `/v1/models`, `/v1/chat/completions`, `/v1/responses`, `/v1/embeddings`, `/health`, `/telemetry`
+  - `/v1/systemone` (decisions, model `clef`) → the Clef MLX decision server (`8091`), which the gateway never starts
 
 The endpoint listens on loopback only and keeps running after the window is closed
-(user LaunchAgent `local.TchouTchou.gateway`).
+(user LaunchAgent `local.RailRouter.gateway`).
 
 ## Requirements
 
@@ -35,7 +36,7 @@ The endpoint listens on loopback only and keeps running after the window is clos
 ```sh
 make test      # built-in test harness, no model is loaded
 make install   # builds, signs ad-hoc, copies to /Applications
-open /Applications/TchouTchou.app
+open /Applications/RailRouter.app
 ```
 
 ## Using the endpoint

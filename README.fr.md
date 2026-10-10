@@ -1,12 +1,12 @@
-# TchouTchou 🚂
+# RailRouter 🚂
 
 **L'aiguillage local de tes LLM sur macOS.** Une app native pour voir tous les modèles
 du Mac (Ollama, LM Studio, MLX) et un endpoint compatible OpenAI qui envoie chaque
 requête au bon moteur.
 
-[English](README.md) · [Page du projet](https://hugo291.github.io/TchouTchou/)
+[English](README.md) · [Page du projet](https://hugo291.github.io/RailRouter/)
 
-![TchouTchou — bibliothèque](docs/screenshot.jpg)
+![RailRouter — bibliothèque](docs/screenshot.jpg)
 
 ## Fonctions
 
@@ -21,7 +21,7 @@ requête au bon moteur.
   modèles gratuits OpenRouter (`:free`).
 
 L'endpoint n'écoute que sur la boucle locale et continue après fermeture de la fenêtre
-(LaunchAgent utilisateur `local.TchouTchou.gateway`).
+(LaunchAgent utilisateur `local.RailRouter.gateway`).
 
 ## Prérequis
 
@@ -32,7 +32,7 @@ macOS 14+, toolchain Swift 5.9+, et au moins un moteur : Ollama, LM Studio ou un
 ```sh
 make test
 make install
-open /Applications/TchouTchou.app
+open /Applications/RailRouter.app
 ```
 
 ## Limites

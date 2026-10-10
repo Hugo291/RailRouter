@@ -1,0 +1,412 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 54;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A1000201 /* RailRouterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000101; };
+		A1000202 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000102; };
+		A1000203 /* LLMModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000103; };
+		A1000204 /* ModelInstance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000104; };
+		A1000205 /* SystemStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000105; };
+		A1000206 /* ChatSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000106; };
+		A1000207 /* ModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000107; };
+		A1000208 /* OllamaService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000108; };
+		A1000209 /* LMStudioService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000109; };
+		A100020A /* MLXProcessMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100010A; };
+		A100020B /* ConflictDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100010B; };
+		A100020C /* ProcessScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100010C; };
+		A100020D /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100010D; };
+		A100020E /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100010E; };
+		A100020F /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100010F; };
+		A1000210 /* ModelsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000110; };
+		A1000211 /* SystemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000111; };
+		A1000213 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000113; };
+		A1000214 /* MemoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000114; };
+		A1000212 /* Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = A1000112; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A1000001 /* RailRouter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "RailRouter.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000101 /* RailRouterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RailRouterApp.swift"; sourceTree = "<group>"; };
+		A1000102 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		A1000103 /* LLMModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMModel.swift; sourceTree = "<group>"; };
+		A1000104 /* ModelInstance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelInstance.swift; sourceTree = "<group>"; };
+		A1000105 /* SystemStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemStatus.swift; sourceTree = "<group>"; };
+		A1000106 /* ChatSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSession.swift; sourceTree = "<group>"; };
+		A1000107 /* ModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelManager.swift; sourceTree = "<group>"; };
+		A1000108 /* OllamaService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaService.swift; sourceTree = "<group>"; };
+		A1000109 /* LMStudioService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LMStudioService.swift; sourceTree = "<group>"; };
+		A100010A /* MLXProcessMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXProcessMonitor.swift; sourceTree = "<group>"; };
+		A100010B /* ConflictDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConflictDetector.swift; sourceTree = "<group>"; };
+		A100010C /* ProcessScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessScanner.swift; sourceTree = "<group>"; };
+		A100010D /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A100010E /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
+		A100010F /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
+		A1000110 /* ModelsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsView.swift; sourceTree = "<group>"; };
+		A1000111 /* SystemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemView.swift; sourceTree = "<group>"; };
+		A1000113 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		A1000114 /* MemoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryView.swift; sourceTree = "<group>"; };
+		A1000112 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A1000402 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A1000010 /* Root */ = {
+			isa = PBXGroup;
+			children = (
+				A1000011 /* RailRouter */,
+				A1000012 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A1000011 /* RailRouter */ = {
+			isa = PBXGroup;
+			children = (
+				A1000020 /* App */,
+				A1000021 /* Models */,
+				A1000022 /* Services */,
+				A1000023 /* Views */,
+				A1000024 /* Utilities */,
+				A1000112 /* Info.plist */,
+			);
+			path = "RailRouter";
+			sourceTree = "<group>";
+		};
+		A1000012 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A1000001 /* RailRouter.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A1000020 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A1000101 /* RailRouterApp.swift */,
+				A1000102 /* AppSettings.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		A1000021 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				A1000103 /* LLMModel.swift */,
+				A1000104 /* ModelInstance.swift */,
+				A1000105 /* SystemStatus.swift */,
+				A1000106 /* ChatSession.swift */,
+				A1000107 /* ModelManager.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		A1000022 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				A1000108 /* OllamaService.swift */,
+				A1000109 /* LMStudioService.swift */,
+				A100010A /* MLXProcessMonitor.swift */,
+				A100010B /* ConflictDetector.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		A1000023 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				A100010D /* ContentView.swift */,
+				A100010E /* DashboardView.swift */,
+				A100010F /* ChatView.swift */,
+				A1000110 /* ModelsView.swift */,
+				A1000111 /* SystemView.swift */,
+				A1000113 /* SidebarView.swift */,
+				A1000114 /* MemoryView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		A1000024 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				A100010C /* ProcessScanner.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A1000300 /* RailRouter */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000600 /* Build configuration list for PBXNativeTarget "RailRouter" */;
+			buildPhases = (
+				A1000401 /* Sources */,
+				A1000402 /* Frameworks */,
+				A1000403 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "RailRouter";
+			productName = "RailRouter";
+			productReference = A1000001 /* RailRouter.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A1000002 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					A1000300 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = A1000500 /* Build configuration list for PBXProject "RailRouter" */;
+			compatibilityVersion = "Xcode 12.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A1000010;
+			productRefGroup = A1000012 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A1000300 /* RailRouter */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A1000403 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000212 /* Info.plist in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A1000401 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000201 /* RailRouterApp.swift in Sources */,
+				A1000202 /* AppSettings.swift in Sources */,
+				A1000203 /* LLMModel.swift in Sources */,
+				A1000204 /* ModelInstance.swift in Sources */,
+				A1000205 /* SystemStatus.swift in Sources */,
+				A1000206 /* ChatSession.swift in Sources */,
+				A1000207 /* ModelManager.swift in Sources */,
+				A1000208 /* OllamaService.swift in Sources */,
+				A1000209 /* LMStudioService.swift in Sources */,
+				A100020A /* MLXProcessMonitor.swift in Sources */,
+				A100020B /* ConflictDetector.swift in Sources */,
+				A100020C /* ProcessScanner.swift in Sources */,
+				A100020D /* ContentView.swift in Sources */,
+				A100020E /* DashboardView.swift in Sources */,
+				A100020F /* ChatView.swift in Sources */,
+				A1000210 /* ModelsView.swift in Sources */,
+				A1000211 /* SystemView.swift in Sources */,
+				A1000213 /* SidebarView.swift in Sources */,
+				A1000214 /* MemoryView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A1000701 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ENABLE_STRICT_ALIASING = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A1000702 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ENABLE_STRICT_ALIASING = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A1000703 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "RailRouter/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "RailRouter";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSSupportsAutomaticGraphicsSwitching = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "local.RailRouter";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Debug;
+		};
+		A1000704 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "RailRouter/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "RailRouter";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSSupportsAutomaticGraphicsSwitching = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "local.RailRouter";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A1000500 /* Build configuration list for PBXProject "RailRouter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000701 /* Debug */,
+				A1000702 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1000600 /* Build configuration list for PBXNativeTarget "RailRouter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000703 /* Debug */,
+				A1000704 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A1000002 /* Project object */;
+}

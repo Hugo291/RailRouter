@@ -2,14 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "TchouTchou",
+    name: "RailRouter",
     platforms: [
         .macOS(.v14)
     ],
     targets: [
         .executableTarget(
-            name: "TchouTchou",
-            path: "TchouTchou",
+            name: "RailRouter",
+            path: "RailRouter",
             exclude: ["Info.plist", "Assets.xcassets", "Resources"]
         )
     ]

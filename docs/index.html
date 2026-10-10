@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TchouTchou — local LLM switchyard for macOS</title>
+<title>RailRouter — local LLM switchyard for macOS</title>
 <meta name="description" content="One native Mac app to see every local model, and one OpenAI-compatible endpoint that routes to Ollama, LM Studio, MLX and OpenRouter.">
 <style>
   :root { --bg:#ffffff; --fg:#1d1d1f; --muted:#6e6e73; --card:#f5f5f7; --accent:#0a6cff; --line:#e5e5ea; }
@@ -29,14 +29,14 @@
 </head>
 <body>
 <main>
-  <h1>TchouTchou 🚂</h1>
+  <h1>RailRouter 🚂</h1>
   <p class="lead">A local LLM switchyard for macOS. See every model on your Mac, and send each request to the right engine through one OpenAI-compatible endpoint.</p>
   <div class="cta">
-    <a class="primary" href="https://github.com/Hugo291/TchouTchou">View on GitHub</a>
-    <a class="secondary" href="https://github.com/Hugo291/TchouTchou#build-and-install">Build it</a>
+    <a class="primary" href="https://github.com/Hugo291/RailRouter">View on GitHub</a>
+    <a class="secondary" href="https://github.com/Hugo291/RailRouter#build-and-install">Build it</a>
   </div>
 
-  <img class="shot" src="screenshot.jpg" alt="TchouTchou model library window">
+  <img class="shot" src="screenshot.jpg" alt="RailRouter model library window">
 
   <div class="grid">
     <div class="card"><h3>Library</h3><p>Ollama and LM Studio models in one table: size, quantization, capabilities. Click to copy an id.</p></div>
@@ -48,12 +48,12 @@
   <h2>Use it</h2>
 <pre>make test
 make install
-open /Applications/TchouTchou.app
+open /Applications/RailRouter.app
 
 curl http://127.0.0.1:41235/v1/models</pre>
   <p>Requires macOS 14+ and at least one of Ollama, LM Studio or an MLX server. The endpoint listens on loopback only.</p>
 
-  <footer>MIT licensed · <a href="https://github.com/Hugo291/TchouTchou">Source</a> · <a href="https://github.com/Hugo291/TchouTchou/blob/main/README.fr.md">Français</a></footer>
+  <footer>MIT licensed · <a href="https://github.com/Hugo291/RailRouter">Source</a> · <a href="https://github.com/Hugo291/RailRouter/blob/main/README.fr.md">Français</a></footer>
 </main>
 </body>
 </html>
