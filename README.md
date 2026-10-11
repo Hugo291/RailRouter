@@ -21,7 +21,7 @@ to the right engine.
   - Ollama (`11434`), LM Studio (`1234`), a running MLX server (`8090`)
   - Ollama cloud models, and free [OpenRouter](https://openrouter.ai) models (`:free`)
   - `/v1/models`, `/v1/chat/completions`, `/v1/responses`, `/v1/embeddings`, `/health`, `/telemetry`
-  - `/v1/systemone` (decisions, model `clef`) → the Clef MLX decision server (`8091`), which the gateway never starts
+  - `/v1/systemone` (Jev/SystemOne body: `state` + typed `questions`) and `/v1/decisions` (OpenAI chat body + `choices`, answered as a `chat.completion` with `confidence`/`probabilities`), model `clef` → the Clef MLX decision server (`8091`), which the gateway never starts
 
 The endpoint listens on loopback only and keeps running after the window is closed
 (user LaunchAgent `local.RailRouter.gateway`).

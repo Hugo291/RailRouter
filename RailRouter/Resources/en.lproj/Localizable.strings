@@ -265,6 +265,7 @@
 "Réponse du catalogue non reconnue." = "Catalog response not recognized.";
 "Entrée du catalogue invalide." = "Invalid catalog entry.";
 "Aucune variante locale téléchargeable." = "No downloadable local variant.";
+"Statistiques indisponibles : LM Studio n’est pas lancé." = "Statistics unavailable: LM Studio is not running.";
 "Statistiques indisponibles : impossible d’ouvrir le flux lms." = "Statistics unavailable: cannot open the lms stream.";
 "Statistiques indisponibles : le flux lms est déconnecté." = "Statistics unavailable: the lms stream is disconnected.";
 "%@ Nouvelle tentative dans %lld s." = "%@ Retrying in %lld s.";
@@ -355,3 +356,15 @@
 "Enregistrer" = "Save";
 "%@ paramètres (d’après le nom du modèle ; le fournisseur ne publie pas ce chiffre)" = "%@ parameters (from the model name; the provider does not publish this figure)";
 "Fournisseurs cloud connectés : %@ modèles reçus." = "Connected cloud providers: %@ models received.";
+"Repli" = "Fallback";
+"En service" = "In service";
+"Quota gratuit Alibaba" = "Alibaba free quota";
+"Alias auto : meilleur modèle gratuit restant" = "auto alias: best free model left";
+"Alias auto : %@ ne répond plus" = "auto alias: %@ no longer answers";
+"Normalement %@ : épuisé, remplacé depuis" = "Normally %@: spent, replaced since";
+"Chaîne de repli : modèles épuisés, modèle en service, puis les prochains à essayer (fichier alibaba-free-quota.txt)." = "Fallback chain: spent models, model in service, then the next ones to try (alibaba-free-quota.txt file).";
+"Repli Alibaba" = "Alibaba fallback";
+"%@ épuisé → %@ · prochain : %@" = "%@ spent → %@ · next: %@";
+"API Alibaba Cloud" = "Alibaba Cloud API";
+"Durée avant le déchargement automatique du modèle inactif." = "Time before the idle model is unloaded automatically.";
+"Un modèle API quitte la mémoire une minute après sa dernière requête." = "An API model leaves memory one minute after its last request.";

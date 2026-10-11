@@ -342,7 +342,7 @@ actor LMStudioService {
 
     func listModels() async -> [LLMModel] {
         // 1. CLI : le plus riche (tailles, params, vision/tools).
-        if let lms = Shell.lmsPath(),
+        if let lms = Shell.lmsPathIfRunning(),
            let raw = await Shell.run(lms, ["ls", "--json"]) {
             let models = Self.decodeLibrary(from: raw.data(using: .utf8) ?? Data())
             if !models.isEmpty { return models }
@@ -391,7 +391,7 @@ actor LMStudioService {
     /// Instances chargées, avec statut de traitement, taille, TTL, vision/tools.
     func getLoadedModels() async -> [ModelInstance] {
         // 1. CLI : données complètes (status, %, sizeBytes, ttl…).
-        if let lms = Shell.lmsPath(),
+        if let lms = Shell.lmsPathIfRunning(),
            let raw = await Shell.run(lms, ["ps", "--json"]) {
             let instances = Self.decodeInstances(from: raw.data(using: .utf8) ?? Data())
             if !instances.isEmpty { return instances }
@@ -429,13 +429,13 @@ actor LMStudioService {
 
     /// Éjecte un modèle via le CLI (canal RPC officiel).
     func unloadModel(identifier: String) async throws {
-        guard let lms = Shell.lmsPath() else { throw LMS.unavailable }
+        guard let lms = Shell.lmsPathIfRunning() else { throw LMS.unavailable }
         _ = await Shell.run(lms, ["unload", identifier])
     }
 
     /// Éjecte TOUS les modèles chargés.
     func unloadAll() async throws {
-        guard let lms = Shell.lmsPath() else { throw LMS.unavailable }
+        guard let lms = Shell.lmsPathIfRunning() else { throw LMS.unavailable }
         _ = await Shell.run(lms, ["unload", "--all"])
     }
 

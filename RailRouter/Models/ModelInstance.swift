@@ -89,6 +89,7 @@ struct ModelInstance: Identifiable {
         let s = Int((ms / 1000).rounded())
         if s < 60 { return "\(s)s" }
         if s < 3600 { return "\(Int((Double(s)/60).rounded()))m" }
+        if s > 365 * 86_400 { return "∞" }   // Ollama keep_alive -1 : expires_at à des siècles
         return "\(Int((Double(s)/3600).rounded()))h"
     }
 

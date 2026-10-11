@@ -8,14 +8,27 @@ struct MemoryView: View {
     private var instances: [ModelInstance] {
         modelManager.systemStatus?.activeInstances ?? []
     }
+    /// Modèles cloud Alibaba utilisés via l'endpoint depuis moins de `GatewayFallback.ttl` : « en mémoire » simulée, avec leur
+    /// chaîne de repli. Un modèle API n'a rien à décharger : il sort de la liste une minute après sa dernière requête.
+    private func chains(at now: Date) -> [(asked: String, state: GatewayFallback)] {
+        modelManager.cloudChains.filter { now.timeIntervalSince($0.value.lastUsed) < GatewayFallback.ttl }
+            .map { ($0.key, $0.value) }.sorted { $0.1.lastUsed > $1.1.lastUsed }
+    }
     private var totalRAM: Double {
         modelManager.systemStatus?.totalRAM_MB ?? 0
     }
 
     var body: some View {
+        // Une tick par seconde : compte à rebours du TTL et disparition des modèles API expirés.
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            content(chains: chains(at: context.date), now: context.date)
+        }
+    }
+
+    private func content(chains: [(asked: String, state: GatewayFallback)], now: Date) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                header
+                header(count: instances.count + chains.count)
 
                 if let status = modelManager.systemStatus, status.hasConflicts {
                     ForEach(status.conflicts) { warning in
@@ -23,7 +36,9 @@ struct MemoryView: View {
                     }
                 }
 
-                if instances.isEmpty {
+                ForEach(chains, id: \.asked) { FallbackCard(asked: $0.asked, state: $0.state, now: now) }
+
+                if instances.isEmpty && chains.isEmpty {
                     emptyState
                 } else {
                     ForEach(instances) { instance in
@@ -38,12 +53,12 @@ struct MemoryView: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private var header: some View {
+    private func header(count: Int) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(L("En mémoire"))
                     .font(.title3.bold())
-                Text(L(instances.count > 1 ? "%lld modèles · %@ utilisés" : "%lld modèle · %@ utilisé", instances.count, humanTotal))
+                Text(L(count > 1 ? "%lld modèles · %@ utilisés" : "%lld modèle · %@ utilisé", count, humanTotal))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
@@ -114,8 +129,9 @@ struct LoadedModelCard: View {
 
                 Spacer(minLength: 8)
 
-                // Statut (TTL / idle)
+                // Statut (idle / traitement) puis TTL, toujours affichée
                 statusPill
+                ttlPill
 
                 // Taille
                 HStack(spacing: 4) {
@@ -163,7 +179,19 @@ struct LoadedModelCard: View {
         )
     }
 
-    // Badge « Idle · TTL 1m · il y a 2m » / « Chargé »
+    /// « TTL 1m » : délai avant déchargement automatique ; « — » quand le moteur ne l'expose pas.
+    private var ttlPill: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "timer")
+            Text("TTL \(instance.ttlLabel ?? "—")")
+        }
+        .font(.caption.monospaced()).foregroundStyle(.secondary)
+        .padding(.horizontal, 8).padding(.vertical, 3)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 5))
+        .help(L("Durée avant le déchargement automatique du modèle inactif."))
+    }
+
+    // Badge « Idle · il y a 2m » / « Chargé »
     @ViewBuilder
     private var statusPill: some View {
         let ps = instance.processState
@@ -188,7 +216,6 @@ struct LoadedModelCard: View {
 
     private var statusTextIdle: String {
         var parts = [L("Inactif")]
-        if let ttl = instance.ttlLabel { parts.append("TTL \(ttl)") }
         if let ago = instance.idleForLabel { parts.append(ago) }
         return parts.joined(separator: " · ")
     }
@@ -261,6 +288,102 @@ struct LoadedModelCard: View {
     }
     private var typeLabel: String {
         instance.typeLabel ?? "llm"
+    }
+}
+
+// MARK: - Carte « modèle cloud » avec chaîne de repli
+
+/// Modèle Alibaba servi par l'endpoint : le modèle réellement utilisé, celui demandé à l'origine s'il est épuisé,
+/// puis les prochains de la chaîne (liste « quota gratuit », meilleur d'abord).
+struct FallbackCard: View {
+    let asked: String
+    let state: GatewayFallback
+    let now: Date
+    private var isFallback: Bool { !state.spent.isEmpty }
+    private let shown = 4
+    private var remaining: Int { max(0, Int((GatewayFallback.ttl - now.timeIntervalSince(state.lastUsed)).rounded(.up))) }
+
+    private enum Step: Hashable { case spent(String), served(String), next(String), more(Int) }
+    private var steps: [Step] {
+        state.spent.map(Step.spent) + [.served(state.served)] + state.next.prefix(shown).map(Step.next)
+            + (state.next.count > shown ? [.more(state.next.count - shown)] : [])
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                HStack(spacing: 4) {
+                    Image(systemName: "cloud")
+                    Text("API")
+                }
+                .font(.caption.monospaced().bold())
+                .foregroundStyle(.secondary)
+                .frame(width: 46, height: 20)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 4))
+                Text(state.served).font(.body.weight(.medium).monospaced()).lineLimit(1)
+                Spacer(minLength: 8)
+                HStack(spacing: 4) {
+                    Image(systemName: "timer")
+                    Text("TTL \(remaining)s")
+                }
+                .font(.caption.monospaced()).foregroundStyle(.secondary)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 5))
+                .help(L("Un modèle API quitte la mémoire une minute après sa dernière requête."))
+                HStack(spacing: 5) {
+                    Circle().fill(isFallback ? Color.orange : Color.green).frame(width: 7, height: 7)
+                    Text(isFallback ? L("Repli") : L("En service")).font(.caption.monospaced().bold())
+                        .foregroundStyle(isFallback ? Color.orange : Color.secondary)
+                }
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 5))
+            }
+            if isFallback {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.triangle.branch").foregroundStyle(.orange)
+                    Text(asked == "auto" ? L("Alias auto : %@ ne répond plus", state.spent[0]) : L("Normalement %@ : épuisé, remplacé depuis", asked))
+                    Text(state.since, style: .time)
+                }
+                .font(.caption.monospaced())
+            } else {
+                Label(asked == "auto" ? L("Alias auto : meilleur modèle gratuit restant") : (state.next.isEmpty ? L("API Alibaba Cloud") : L("Quota gratuit Alibaba")), systemImage: "cloud")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                        if index > 0 { Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary) }
+                        chip(step)
+                    }
+                }
+            }
+            .help(L("Chaîne de repli : modèles épuisés, modèle en service, puis les prochains à essayer (fichier alibaba-free-quota.txt)."))
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 10).fill(isFallback ? AnyShapeStyle(Color.orange.opacity(0.06)) : AnyShapeStyle(.quaternary.opacity(0.25))))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(isFallback ? Color.orange.opacity(0.5) : Color.primary.opacity(0.08)))
+    }
+
+    @ViewBuilder
+    private func chip(_ step: Step) -> some View {
+        switch step {
+        case .spent(let id):
+            Text(id).strikethrough().foregroundStyle(.secondary).chip()
+        case .served(let id):
+            Text(id).bold().chip(tint: isFallback ? .orange : .green)
+        case .next(let id):
+            Text(id).chip()
+        case .more(let count):
+            Text("+\(count)").foregroundStyle(.secondary).chip()
+        }
+    }
+}
+
+private extension View {
+    func chip(tint: Color? = nil) -> some View {
+        font(.caption.monospaced()).lineLimit(1).fixedSize()
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background((tint ?? Color.secondary).opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
     }
 }
 

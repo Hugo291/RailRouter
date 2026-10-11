@@ -31,7 +31,10 @@ enum CodexProbe {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpShouldHandleCookies = false
         var payload = body
-        payload["model"] = String(id.dropFirst("alibaba/".count))
+        // Liste « quota gratuit » active : on teste le modèle réellement servi (`auto` compris), jamais un modèle payant.
+        let asked = String(id.dropFirst("alibaba/".count)), free = GatewayAlibaba.freeQuota()
+        guard let model = free == nil ? asked : GatewayAlibaba.freeModel(for: asked, in: free!) else { return nil }
+        payload["model"] = model
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         guard let (data, response) = try? await session.data(for: request, delegate: GatewayNoRedirect()),
               let status = (response as? HTTPURLResponse)?.statusCode else { return nil }

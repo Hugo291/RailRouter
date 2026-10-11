@@ -78,6 +78,8 @@ final class ModelManager: ObservableObject {
 
     // ── Bibliothèque ──
     @Published var models: [LLMModel] = []
+    /// Modèles Alibaba demandés via l'endpoint → chaîne de repli en cours (voir `GatewayFallback`).
+    @Published var cloudChains: [String: GatewayFallback] = [:]
     @Published var modelSearch: String = ""
     @Published var isModelSearchActive = false
     @Published var selectedModelID: String? = nil
@@ -316,6 +318,15 @@ final class ModelManager: ObservableObject {
         }
 
         let gatewaySnapshot = await gatewayRequests
+        // TTL of an API model counts from the end of its last request, and does not run while one is still streaming.
+        let alibabaCalls = gatewaySnapshot.requests.filter { $0.source == "alibaba" && Date().timeIntervalSince($0.startedAt) <= 3600 }
+        cloudChains = gateway.fallbacks.mapValues { state in
+            var state = state
+            let mine = alibabaCalls.filter { $0.upstreamModel?.caseInsensitiveCompare(state.served) == .orderedSame }
+            if mine.contains(where: { $0.finishedAt == nil }) { state.lastUsed = Date() }
+            else if let end = mine.compactMap(\.finishedAt).max(), end > state.lastUsed { state.lastUsed = end }
+            return state
+        }
         GatewayActivity.apply(gatewaySnapshot.requests, calls: gatewaySnapshot.calls, to: &active)
 
         // Synchronise l'état de la bibliothèque avec les instances chargées
@@ -421,7 +432,7 @@ final class ModelManager: ObservableObject {
     }
 
     private func refreshLMSData(command: String) async throws -> Data {
-        guard let lms = Shell.lmsPath(), let raw = await Shell.run(lms, [command, "--json"]),
+        guard let lms = Shell.lmsPathIfRunning(), let raw = await Shell.run(lms, [command, "--json"]),
               let data = raw.data(using: .utf8) else {
             throw NSError(domain: "Refresh", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: L("CLI lms %@ indisponible ou sans réponse", command)])

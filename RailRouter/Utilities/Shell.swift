@@ -14,6 +14,14 @@ enum Shell {
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
+    /// `lms` seulement si l'app LM Studio ou le démon `llmster` tourne déjà : le CLI démarre
+    /// sinon `llmster` lui-même, et LM Studio refuse ensuite de s'ouvrir (« cannot run at the same time »).
+    /// Pour les lectures périodiques ; une action explicite de l'utilisateur utilise `lmsPath()`.
+    static func lmsPathIfRunning() -> String? {
+        guard let path = lmsPath(), runSync("/usr/bin/pgrep", ["-x", "LM Studio|llmster"], timeout: 3) != nil else { return nil }
+        return path
+    }
+
     /// Exécute `path args…` et renvoie stdout (nil si échec/lancement impossible). Non bloquant.
     static func run(_ path: String, _ args: [String], timeout: TimeInterval = 15) async -> String? {
         await withCheckedContinuation { cont in

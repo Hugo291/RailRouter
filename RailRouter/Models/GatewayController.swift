@@ -12,6 +12,8 @@ final class GatewayController: ObservableObject {
     @Published private(set) var message = L("Endpoint non démarré")
     @Published private(set) var modelIDs: [String] = []
     @Published private(set) var requests: [GatewayRequestTelemetry] = []
+    /// Alibaba model asked through the endpoint → where it is really served (see `GatewayFallback`).
+    private(set) var fallbacks: [String: GatewayFallback] = [:]
     var apiURL: String { Self.baseURL.appendingPathComponent("v1").absoluteString }
     private var domain: String { "gui/\(getuid())" }
     private var agentURL: URL {
@@ -52,11 +54,12 @@ final class GatewayController: ObservableObject {
         request.timeoutInterval = 1
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return ([], [:]) }
-        struct Envelope: Decodable { let requests: [GatewayRequestTelemetry]; let calls: [String: Int]? }
+        struct Envelope: Decodable { let requests: [GatewayRequestTelemetry]; let calls: [String: Int]?; let fallbacks: [String: GatewayFallback]? }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .secondsSince1970
         let envelope = try? decoder.decode(Envelope.self, from: data)
         requests = envelope?.requests ?? []
+        fallbacks = envelope?.fallbacks ?? [:]
         return (requests, envelope?.calls ?? [:])
     }
 

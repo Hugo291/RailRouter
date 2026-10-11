@@ -51,6 +51,11 @@ struct UnifiedGatewayTests {
         check(UnifiedGateway.upstreamHeaders(desktop, source: "ollama").count == 4, "Local engines keep client headers")
         let bridgeHeaders = UnifiedGateway.filteredHeaders(["authorization": "secret", "cookie": "secret", "host": "evil"], allowCredentials: true)
         check(bridgeHeaders.count == 2, "Only OpenAI retains existing credentials")
+        let authFile = FileManager.default.temporaryDirectory.appendingPathComponent("codex-auth-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: authFile) }
+        try? Data(#"{"tokens":{"access_token":"tok","refresh_token":"r","account_id":"acc"}}"#.utf8).write(to: authFile)
+        check(UnifiedGateway.codexAuthHeaders(file: authFile) == ["Authorization": "Bearer tok", "chatgpt-account-id": "acc"], "Codex auth.json gives the ChatGPT account headers")
+        check(UnifiedGateway.codexAuthHeaders(file: authFile.appendingPathExtension("missing")).isEmpty, "No auth.json, no injected credentials")
         check(UnifiedGateway.filteredHeaders(["set-cookie": "secret", "content-encoding": "gzip", "x-safe": "yes"], allowCredentials: false, response: true) == ["x-safe": "yes"], "Local response cookies and decoded encoding removed")
 
         let catalog = GatewayCatalog(ollama: ["data": [["id": "qwen:8b"]]],
@@ -72,6 +77,19 @@ struct UnifiedGatewayTests {
         check(try UnifiedGateway.route(path: "/v1/chat/completions", model: "http://evil", catalog: catalog).url.host == "127.0.0.1", "Model text cannot change upstream host")
         let clef = try UnifiedGateway.route(path: "/v1/systemone", model: "mlx/clef", catalog: catalog)
         check(clef.url.absoluteString == "http://127.0.0.1:8091/v1/systemone" && clef.model == "clef" && clef.source == "clef", "Clef decisions go to the MLX server on 8091")
+        check(try UnifiedGateway.route(path: "/v1/decisions", model: "clef", catalog: catalog).url.absoluteString == "http://127.0.0.1:8091/v1/systemone", "/v1/decisions reaches Clef's SystemOne route")
+        let asked: [String: Any] = ["model": "clef", "choices": ["A": "ship", "B": "wait"], "messages": [
+            ["role": "system", "content": "release review"],
+            ["role": "user", "content": [["type": "text", "text": "Ship now?"], ["type": "image_url", "image_url": ["url": "data:image/png;base64,AA=="]]]]]]
+        let sys = (try? JSONSerialization.jsonObject(with: UnifiedGateway.decisionsRequest(asked))) as? [String: Any]
+        let question = (sys?["questions"] as? [String: Any])?["q"] as? [String: Any]
+        check(sys?["state"] as? String == "system: release review" && question?["instructions"] as? String == "Ship now?"
+              && question?["type"] as? String == "choice" && (sys?["images"] as? [String])?.count == 1, "Decisions request becomes a SystemOne body")
+        do { _ = try UnifiedGateway.decisionsRequest(["model": "clef", "messages": [["role": "user", "content": "q"]]]); check(false, "choices are required") }
+        catch { check((error as? GatewayFailure)?.status == 400, "Decisions without choices are a 400") }
+        let answer = try UnifiedGateway.decisionsResponse(Data(#"{"model":"clef","answers":{"q":{"type":"choice","choice":"B","confidence":0.8,"probabilities":{"A":0.2,"B":0.8}}},"usage":{"input_tokens":12}}"#.utf8))
+        let message = ((answer["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any])?["content"] as? String
+        check(answer["object"] as? String == "chat.completion" && message == "B" && (answer["usage"] as? [String: Any])?["prompt_tokens"] as? Int == 12, "SystemOne answer becomes a chat.completion")
         do { _ = try UnifiedGateway.route(path: "/v1/systemone", model: "qwen:8b", catalog: catalog); check(false, "Only clef answers /v1/systemone") }
         catch { check((error as? GatewayFailure)?.status == 404, "No other decision model") }
         do { _ = try UnifiedGateway.route(path: "/v1/chat/completions", model: "cloud", catalog: catalog); check(false, "OAuth chat unsupported") }
@@ -176,6 +194,40 @@ struct UnifiedGatewayTests {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let telemetryFile = directory.appendingPathComponent("gateway.json")
         defer { try? FileManager.default.removeItem(at: directory) }
+        // Alibaba free quota: a spent model leaves the list and the same request is replayed on the next chat model.
+        let quotaFile = directory.appendingPathComponent("alibaba-free-quota.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "text-embedding-v4\nquota-spent-chat\nFree-Chat\n".write(to: quotaFile, atomically: true, encoding: .utf8)
+        let quota = GatewayAlibaba.freeQuota(file: quotaFile)!
+        check(GatewayAlibaba.freeQuota(file: URL(fileURLWithPath: "/nonexistent")) == nil, "No free-quota list: Alibaba is left untouched")
+        check(GatewayAlibaba.freeModel(for: "free-chat", in: quota) == "Free-Chat" && GatewayAlibaba.freeModel(for: "auto", in: quota) == "quota-spent-chat", "Listed model kept, unlisted chat model gets the first listed chat model")
+        check(GatewayAlibaba.freeModel(for: "paid-embedding", in: quota) == "text-embedding-v4" && GatewayAlibaba.freeModel(for: "paid-image", in: quota) == nil, "Fallback keeps the job of the asked model")
+        check(GatewayAlibaba.unusable(Data(#"{"error":{"code":"AllocationQuota.FreeTierOnly"}}"#.utf8), status: 403)
+            && GatewayAlibaba.unusable(Data("id:1\nevent:response.failed\ndata:{\"response\":{\"error\":{\"code\":\"server_error\",\"message\":\"The free tier of the model has been exhausted.\"}}}\n\n".utf8), status: 200)
+            && !GatewayAlibaba.unusable(Data("event:response.created\ndata:{\"response\":{\"instructions\":\"free tier\"}}\n\n".utf8), status: 200)
+            && GatewayAlibaba.unusable(Data(#"{"error":{"code":"BudgetLimitExceeded"}}"#.utf8), status: 429)
+            && GatewayAlibaba.unusable(Data("id:1\nevent:response.failed\ndata:{\"response\":{\"error\":{\"code\":\"server_error\",\"message\":\"The budget configured in Budget Management has been exhausted.\"}}}\n\n".utf8), status: 200)
+            && GatewayAlibaba.unusable(Data(#"{"error":{"code":"model_not_found","message":"Model not exist."}}"#.utf8), status: 404)
+            && !GatewayAlibaba.unusable(Data(#"{"error":{"code":"InvalidParameter"}}"#.utf8), status: 400), "Unusable model (quota spent, budget stop, retired) told apart from other failures and from a prompt quoting it")
+        var quotaRequest = URLRequest(url: URL(string: "http://127.0.0.1:9/v1/chat/completions")!)
+        quotaRequest.httpMethod = "POST"
+        quotaRequest.httpBody = Data(#"{"model":"quota-spent-chat","messages":[]}"#.utf8)
+        var replayed = try await GatewayAlibaba.send(quotaRequest, asked: "auto", file: quotaFile, session: upstreamSession)
+        var replayedBody = replayed.head
+        while let byte = try await replayed.rest.next() { replayedBody.append(byte) }
+        check((replayed.response as? HTTPURLResponse)?.statusCode == 200 && String(decoding: replayedBody, as: UTF8.self).hasSuffix("[DONE]\n\n")
+            && String(decoding: GatewayMockProtocol.body(GatewayMockProtocol.captured().last!), as: UTF8.self).contains("Free-Chat")
+            && GatewayAlibaba.freeQuota(file: quotaFile) == ["text-embedding-v4", "Free-Chat"], "Spent model dropped, request replayed on the next one, whole answer relayed")
+        var effortRequest = quotaRequest
+        effortRequest.httpBody = Data(#"{"model":"Free-Chat","reasoning":{"effort":"xhigh"},"messages":[]}"#.utf8)
+        var lowered = try await GatewayAlibaba.send(effortRequest, asked: "Free-Chat", file: quotaFile, session: upstreamSession)
+        var loweredBody = lowered.head
+        while let byte = try await lowered.rest.next() { loweredBody.append(byte) }
+        let loweredSent = String(decoding: GatewayMockProtocol.body(GatewayMockProtocol.captured().last!), as: UTF8.self)
+        check((lowered.response as? HTTPURLResponse)?.statusCode == 200 && loweredSent.contains(#""effort":"medium""#) && lowered.served == "Free-Chat"
+            && GatewayAlibaba.freeQuota(file: quotaFile) == ["text-embedding-v4", "Free-Chat"]
+            && GatewayAlibaba.mediumEffort(["reasoning_effort": "high"])?["reasoning_effort"] as? String == "medium"
+            && GatewayAlibaba.mediumEffort(["reasoning": ["effort": "low"]]) == nil, "Rejected thinking budget: same model, effort lowered to medium, nothing dropped")
         var gateway: UnifiedGateway?
         var port: UInt16 = 0
         for _ in 0..<10 {
@@ -303,8 +355,59 @@ struct UnifiedGatewayTests {
         let unaryJSON = try JSONSerialization.jsonObject(with: unary.0) as? [String: Any]
         check(unary.1.statusCode == 200 && unaryJSON?["object"] as? String == "response" && unaryJSON?["status"] as? String == "completed"
               && String(decoding: unary.0, as: UTF8.self).contains("output-secret"), "Non-streaming bridged Responses returns one response object")
+
+        // ChatGPT usage limit (429): without a free-quota list it is relayed; with one, the request is replayed on Alibaba.
+        let limitedBody = Data(#"{"model":"gpt-test","input":"chatgpt-limited"}"#.utf8)
+        check(try await call("/v1/responses", body: limitedBody).1.statusCode == 429, "ChatGPT usage limit relayed without a free-quota list")
+        keyed.stop()
+        let replaying = UnifiedGateway(port: port, session: upstreamSession, telemetryFile: nil, alibabaFreeQuotaFile: quotaFile)
+        try replaying.start()
+        defer { replaying.stop() }
+        let sent = GatewayMockProtocol.captured().count
+        let limited = try await call("/v1/responses", body: limitedBody)
+        let replayModels = GatewayMockProtocol.captured().dropFirst(sent).filter { $0.url?.host == "chatgpt.com" }.count
+        let record = await replaying.telemetrySnapshot().last
+        check(limited.1.statusCode != 429 && replayModels == 1 && record?.source == "alibaba" && record?.status != 429, "ChatGPT usage limit replayed once on a free Alibaba model")
+
+        // Spent free quota: the request moves to the next model, the chain is published and a notice fires once per change.
+        replaying.stop()
+        let chainFile = directory.appendingPathComponent("fallback-quota.txt")
+        try "quota-spent-chat\nFree-Chat\nSecond-Chat\n".write(to: chainFile, atomically: true, encoding: .utf8)
+        let notices = GatewayNoticeBox()
+        let chained = UnifiedGateway(port: port, session: upstreamSession, telemetryFile: nil, providerEnvironment: ["DASHSCOPE_API_KEY": "ali-key"],
+                                     alibabaFreeQuotaFile: chainFile, fallbackNotice: { notices.add($0, $1) })
+        try chained.start()
+        defer { chained.stop() }
+        let spentBody = Data(#"{"model":"alibaba/quota-spent-chat","input":"hi"}"#.utf8)
+        let first = try await call("/v1/responses", body: spentBody)
+        _ = try await call("/v1/responses", body: spentBody)
+        let published = (try JSONSerialization.jsonObject(with: try await call("/telemetry").0) as? [String: Any])?["fallbacks"] as? [String: [String: Any]]
+        let chain = published?["quota-spent-chat"]
+        check(first.1.statusCode == 200 && chain?["served"] as? String == "Free-Chat" && chain?["spent"] as? [String] == ["quota-spent-chat"]
+              && chain?["next"] as? [String] == ["Second-Chat"], "Fallback chain published: served, spent, next")
+        let sentNotices = notices.items
+        check(sentNotices.count == 1 && sentNotices[0].title == "Repli Alibaba" && sentNotices[0].body.contains("quota-spent-chat")
+              && sentNotices[0].body.contains("Free-Chat") && sentNotices[0].body.contains("Second-Chat"), "One notice naming spent, served and next model")
+
+        // Paid plan, no free-quota list: the served model is still published (memory view, 1 min TTL), with nothing spent or next.
+        chained.stop()
+        let paid = UnifiedGateway(port: port, session: upstreamSession, telemetryFile: nil, providerEnvironment: ["DASHSCOPE_API_KEY": "ali-key"],
+                                  alibabaFreeQuotaFile: directory.appendingPathComponent("absent-quota.txt"))
+        try paid.start()
+        defer { paid.stop() }
+        _ = try await call("/v1/responses", body: Data(#"{"model":"alibaba/Free-Chat","input":"hi"}"#.utf8))
+        let paidChain = ((try JSONSerialization.jsonObject(with: try await call("/telemetry").0) as? [String: Any])?["fallbacks"] as? [String: [String: Any]])?["Free-Chat"]
+        check(paidChain?["served"] as? String == "Free-Chat" && (paidChain?["spent"] as? [String])?.isEmpty == true
+              && (paidChain?["next"] as? [String])?.isEmpty == true, "Chain published without a free-quota list")
         return (checks, failures)
     }
+}
+
+private final class GatewayNoticeBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [(title: String, body: String)] = []
+    func add(_ title: String, _ body: String) { lock.lock(); stored.append((title, body)); lock.unlock() }
+    var items: [(title: String, body: String)] { lock.lock(); defer { lock.unlock() }; return stored }
 }
 
 private final class GatewayMockProtocol: URLProtocol {
@@ -344,7 +447,13 @@ private final class GatewayMockProtocol: URLProtocol {
             sse = true
             content = "data: {\"choices\":[{\"delta\":{\"content\":\"output-secret\"}}]}\n\ndata: {\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":7}}\n\ndata: [DONE]\n\n"
         } else { content = #"{"output":"output-secret","usage":{"input_tokens":12,"output_tokens":7}}"# }
-        let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": sse ? "text/event-stream" : "application/json", "Set-Cookie": "upstream-cookie"])!
+        let spent = String(decoding: Self.body(request), as: UTF8.self).contains("quota-spent-chat")
+        let budget = String(decoding: Self.body(request), as: UTF8.self).contains(#""effort":"xhigh""#) || String(decoding: Self.body(request), as: UTF8.self).contains(#""effort":"high""#)
+        if budget { sse = false; content = #"{"error":{"code":"InvalidParameter","message":"<400> InternalError.Algo.InvalidParameter: The thinking_budget parameter must be a positive integer and not greater than 131072"}}"# }
+        if spent { sse = false; content = #"{"error":{"code":"AllocationQuota.FreeTierOnly","message":"The free tier of the model has been exhausted."}}"# }
+        let limited = url.host == "chatgpt.com" && String(decoding: Self.body(request), as: UTF8.self).contains("chatgpt-limited")
+        if limited { content = #"{"error":{"type":"usage_limit_reached","message":"You've hit your usage limit."}}"# }
+        let response = HTTPURLResponse(url: url, statusCode: limited ? 429 : spent ? 403 : budget ? 400 : 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": sse ? "text/event-stream" : "application/json", "Set-Cookie": "upstream-cookie"])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         if url.path == "/v1/chat/completions", String(decoding: Self.body(request), as: UTF8.self).contains("cancel:fixture") {
             client?.urlProtocol(self, didLoad: Data("data: {\"choices\":[]}\n\n".utf8))

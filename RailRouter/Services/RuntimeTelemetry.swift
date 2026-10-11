@@ -136,8 +136,8 @@ actor LMStudioTelemetry {
 
     func start() {
         guard process == nil, Date() >= nextRetryAt else { return }
-        guard let path = Shell.lmsPath() else {
-            scheduleRetry("Statistiques indisponibles : CLI lms introuvable.")
+        guard let path = Shell.lmsPathIfRunning() else {
+            scheduleRetry(L("Statistiques indisponibles : LM Studio n’est pas lancé."))
             return
         }
         let child = Process()

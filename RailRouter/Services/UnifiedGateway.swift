@@ -11,8 +11,12 @@ final class UnifiedGateway: @unchecked Sendable {
     private let telemetry: GatewayTelemetry
     private let mlxActivityFile: URL?
     private let openAICatalogFile: URL?
+    private let codexAuthFile: URL?
     private let providerEnvironment: [String: String]
     private let providerKeyFile: URL
+    private let alibabaFreeQuotaFile: URL
+    /// Called (title, body) when an Alibaba model is replaced by a fallback; nil in tests unless injected.
+    private let fallbackNotice: (@Sendable (String, String) -> Void)?
     private let metadataCache = GatewayMetadataCache()
     private let residencyGate = GatewayResidencyGate()
     private var listener: NWListener?
@@ -21,8 +25,11 @@ final class UnifiedGateway: @unchecked Sendable {
     init(port: UInt16 = 41235) {
         self.port = port
         openAICatalogFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/local-models/catalog.json")
+        codexAuthFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/auth.json")
         providerEnvironment = ProcessInfo.processInfo.environment
         providerKeyFile = CloudProviders.keyFile
+        alibabaFreeQuotaFile = GatewayAlibaba.freeQuotaFile
+        fallbackNotice = GatewayAlibaba.notify
         mlxActivityFile = GatewayMLXActivity.defaultFile
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpShouldSetCookies = false
@@ -37,12 +44,17 @@ final class UnifiedGateway: @unchecked Sendable {
     }
 
     /// Test seam: an ephemeral session with URLProtocol fixtures; never a model call.
-    init(port: UInt16, session: URLSession, telemetryFile: URL?, providerEnvironment: [String: String] = [:]) {
+    init(port: UInt16, session: URLSession, telemetryFile: URL?, providerEnvironment: [String: String] = [:], codexAuthFile: URL? = nil,
+         alibabaFreeQuotaFile: URL = URL(fileURLWithPath: "/nonexistent/alibaba-free-quota.txt"),
+         fallbackNotice: (@Sendable (String, String) -> Void)? = nil) {
         self.port = port
         self.session = session
         openAICatalogFile = nil
+        self.codexAuthFile = codexAuthFile
         self.providerEnvironment = providerEnvironment
         providerKeyFile = URL(fileURLWithPath: "/nonexistent/provider-keys.json")
+        self.alibabaFreeQuotaFile = alibabaFreeQuotaFile
+        self.fallbackNotice = fallbackNotice
         mlxActivityFile = nil // fixtures must never refresh the real model watchdog
         telemetry = GatewayTelemetry(file: telemetryFile)
     }
@@ -118,7 +130,7 @@ final class UnifiedGateway: @unchecked Sendable {
                 let catalog = await discover()
                 try Task.checkCancellation()
                 try await peer.json(["object": "list", "data": catalog.models])
-            case ("POST", "/v1/chat/completions"), ("POST", "/v1/embeddings"), ("POST", "/v1/responses"), ("POST", "/v1/systemone"):
+            case ("POST", "/v1/chat/completions"), ("POST", "/v1/embeddings"), ("POST", "/v1/responses"), ("POST", "/v1/systemone"), ("POST", "/v1/decisions"):
                 let decodedBody = try GatewayZstd.decode(request.body, encoding: request.headers["content-encoding"])
                 guard let object = (try? JSONSerialization.jsonObject(with: decodedBody)) as? [String: Any] else {
                     throw GatewayFailure(400, "Expected a JSON object")
@@ -137,6 +149,20 @@ final class UnifiedGateway: @unchecked Sendable {
                 record = GatewayRequestTelemetry(id: peer.id, path: request.path, model: model, upstreamModel: route.source == "openai" ? nil : route.model, source: route.source)
                 await telemetry.begin(record!)
                 var body = decodedBody
+                // OpenAI-style decisions: translated to Clef's SystemOne body here, the answer translated back below.
+                let decisions = request.path == "/v1/decisions"
+                if decisions { body = try Self.decisionsRequest(object) }
+                // Alibaba free quota only (optional list): an unlisted or spent model is served by the best listed one.
+                var upstreamModel = route.model
+                var spentModels: [String] = []
+                let freeQuota = route.source == "alibaba" ? GatewayAlibaba.freeQuota(file: alibabaFreeQuotaFile) : nil
+                if let freeQuota, let asked = route.model {
+                    guard let free = GatewayAlibaba.freeModel(for: asked, in: freeQuota) else {
+                        throw GatewayFailure(403, "No Alibaba model with free quota left for \(asked): see \(alibabaFreeQuotaFile.path)")
+                    }
+                    upstreamModel = free
+                    if asked != "auto", free.caseInsensitiveCompare(asked) != .orderedSame { spentModels = [asked] }
+                }
                 if route.source == "mlx" {
                     guard object["adapter_path"] == nil || object["adapter_path"] is NSNull else {
                         throw GatewayFailure(400, "Gateway does not load MLX adapter weights")
@@ -152,7 +178,7 @@ final class UnifiedGateway: @unchecked Sendable {
                 if route.source == "alibaba" || route.source == "clef" || CloudProviders.generic(id: route.source) != nil {
                     // Exposed as `alibaba/<id>` / `deepseek/<id>` / `mlx/clef`; the upstream only knows `<id>`.
                     var rewritten = (try? JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? object
-                    rewritten["model"] = route.model
+                    rewritten["model"] = upstreamModel
                     body = try JSONSerialization.data(withJSONObject: rewritten)
                 }
                 // Keyed providers only speak chat/completions: the Responses request is translated, the stream translated back below.
@@ -174,6 +200,11 @@ final class UnifiedGateway: @unchecked Sendable {
                 for (name, value) in Self.upstreamHeaders(request.headers, source: route.source) {
                     upstream.setValue(value, forHTTPHeaderField: name)
                 }
+                // Codex with `requires_openai_auth = false` sends no token (so an exhausted ChatGPT quota never blocks the
+                // other models): the ChatGPT account is read from Codex's own auth.json, read-only, never refreshed here.
+                if route.source == "openai", upstream.value(forHTTPHeaderField: "Authorization") == nil, let file = codexAuthFile {
+                    for (name, value) in Self.codexAuthHeaders(file: file) { upstream.setValue(value, forHTTPHeaderField: name) }
+                }
                 if route.source == "openrouter" {
                     // The client's Authorization (ChatGPT token) is stripped above; OpenRouter gets its own key.
                     guard let key = GatewayOpenRouter.apiKey() else {
@@ -182,7 +213,7 @@ final class UnifiedGateway: @unchecked Sendable {
                     upstream.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
                 }
                 if route.source == "alibaba" {
-                    guard let key = GatewayAlibaba.apiKey() else {
+                    guard let key = GatewayAlibaba.apiKey(environment: providerEnvironment, keyFile: providerKeyFile) else {
                         throw GatewayFailure(401, "No Alibaba key: set DASHSCOPE_API_KEY (launchctl setenv for the LaunchAgent)")
                     }
                     upstream.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
@@ -199,12 +230,38 @@ final class UnifiedGateway: @unchecked Sendable {
                 upstream.httpShouldHandleCookies = false
                 let activity = route.source == "mlx" ? GatewayMLXActivity(file: mlxActivityFile) : nil
                 defer { activity?.stop() }
-                let (bytes, response) = try await session.bytes(for: upstream, delegate: GatewayNoRedirect())
+                // `head`: start of the answer already read by `GatewayAlibaba.send` to tell an unusable model; `rest` continues after it.
+                var head = Data(), rest: URLSession.AsyncBytes.AsyncIterator
+                var served = upstreamModel ?? "", tried: [String] = []
+                let bytes: URLSession.AsyncBytes, response: URLResponse
+                if freeQuota != nil, let asked = route.model {
+                    (bytes, response, rest, head, served, tried) = try await GatewayAlibaba.send(upstream, asked: asked, file: alibabaFreeQuotaFile, session: session)
+                } else {
+                    (bytes, response) = try await session.bytes(for: upstream, delegate: GatewayNoRedirect())
+                    rest = bytes.makeAsyncIterator()
+                }
                 // Explicitly cancel AsyncBytes.task too: cancellation after headers
                 // must terminate the producer while a downstream send is suspended.
                 peer.track(bytes.task)
                 defer { bytes.task.cancel() }
                 guard let response = response as? HTTPURLResponse else { throw GatewayFailure(502, "Invalid upstream response") }
+                // ChatGPT quota spent: Codex's pre-turn compaction after a model switch targets the previous OpenAI model and
+                // would fail the turn. Replayed once on the best free Alibaba model (same telemetry id, replaces this record).
+                // ponytail: any ChatGPT usage-limit 429 on /v1/responses, not only compaction.
+                if route.source == "openai", response.statusCode == 429, request.path == "/v1/responses",
+                   GatewayAlibaba.freeQuota(file: alibabaFreeQuotaFile)?.isEmpty == false {
+                    while head.count < 64 * 1024, let byte = try await rest.next() { head.append(byte) }
+                    let text = String(decoding: head, as: UTF8.self).lowercased()
+                    if text.contains("usage limit") || text.contains("usage_limit") {
+                        var replay = object
+                        replay["model"] = "alibaba/auto"
+                        var headers = request.headers
+                        headers["content-encoding"] = nil
+                        let body = try JSONSerialization.data(withJSONObject: replay)
+                        try await handle(GatewayHTTPRequest(method: request.method, path: request.path, headers: headers, body: body, length: body.count), peer: peer)
+                        return
+                    }
+                }
                 let sse = response.value(forHTTPHeaderField: "Content-Type")?.lowercased().contains("text/event-stream") == true
                 var usage = GatewayUsageParser(sse: sse)
                 if let bridged, response.statusCode >= 300 {
@@ -212,8 +269,19 @@ final class UnifiedGateway: @unchecked Sendable {
                     for try await byte in bytes where raw.count < 64 * 1024 { raw.append(byte) }
                     throw GatewayFailure(response.statusCode, bridged.name + ": " + GatewayResponsesBridge.errorMessage(raw))
                 }
-                if bridged == nil { try await peer.responseHead(response, allowCredentials: route.source == "openai") }
+                let translateDecisions = decisions && response.statusCode < 300 // errors already carry `{"error":{"message"}}`
+                if bridged == nil, !translateDecisions { try await peer.responseHead(response, allowCredentials: route.source == "openai") }
                 record?.status = response.statusCode
+                if route.source == "alibaba", let asked = route.model, response.statusCode < 400 {
+                    // Chain of the asked model (where it went, where it would go next), kept for the interface and a notice.
+                    // Without a free-quota list (paid plan) the chain is just the served model: the memory view still shows it.
+                    record?.upstreamModel = served
+                    let list = GatewayAlibaba.freeQuota(file: alibabaFreeQuotaFile) ?? []
+                    let state = GatewayAlibaba.fallback(asked: asked, served: served, spent: spentModels + tried, list: list)
+                    if await telemetry.setFallback(asked, state), !state.spent.isEmpty, let fallbackNotice {
+                        fallbackNotice(L("Repli Alibaba"), L("%@ épuisé → %@ · prochain : %@", state.spent[0], served, state.next.first ?? "—"))
+                    }
+                }
                 record?.phase = "generating" // proxy phase: headers received, body forwarding starts
                 await telemetry.update(record!)
                 if let bridged {
@@ -236,9 +304,19 @@ final class UnifiedGateway: @unchecked Sendable {
                     if streaming { for event in events { try await peer.send(event) } }
                     else if let failure = stream.failure { throw GatewayFailure(502, bridged.name + ": " + failure) }
                     else { try await peer.json(stream.response) }
+                } else if translateDecisions {
+                    var raw = Data()
+                    while let byte = try await rest.next() {
+                        try Task.checkCancellation()
+                        usage.ingest(byte)
+                        if raw.count < GatewayHTTPRequest.bodyLimit { raw.append(byte) }
+                    }
+                    try await peer.json(try Self.decisionsResponse(raw))
                 } else {
                     var chunk = Data()
-                    for try await byte in bytes {
+                    for byte in head { usage.ingest(byte) }
+                    if !head.isEmpty { try await peer.send(head) }
+                    while let byte = try await rest.next() {
                         try Task.checkCancellation()
                         usage.ingest(byte)
                         chunk.append(byte)
@@ -282,7 +360,7 @@ final class UnifiedGateway: @unchecked Sendable {
         async let lms = fetchJSON(port: 1234, path: "/v1/models")
         async let mlx = fetchJSON(port: 8090, path: "/v1/models")
         async let openRouter = GatewayOpenRouter.freeCatalog(session: session)
-        async let alibaba = GatewayAlibaba.catalog(session: session)
+        async let alibaba = GatewayAlibaba.catalog(session: session, freeQuotaFile: alibabaFreeQuotaFile)
         async let clouds = CloudProviders.catalogs(session: session, environment: providerEnvironment, keyFile: providerKeyFile)
         // Passive capability discovery: never probes POST or triggers inference.
         async let schema = fetchJSON(port: 8090, path: "/openapi.json")
@@ -330,14 +408,14 @@ final class UnifiedGateway: @unchecked Sendable {
     }
 
     static func route(path: String, model: String?, catalog: GatewayCatalog) throws -> GatewayRoute {
-        guard ["/v1/responses", "/v1/chat/completions", "/v1/embeddings", "/v1/systemone"].contains(path) else {
+        guard ["/v1/responses", "/v1/chat/completions", "/v1/embeddings", "/v1/systemone", "/v1/decisions"].contains(path) else {
             throw GatewayFailure(404, "Unknown route")
         }
-        if path == "/v1/systemone" {
+        if path == "/v1/systemone" || path == "/v1/decisions" {
             // Decision model Clef (MLX), served on 8091 by ~/.ai/skills/use-decision/scripts/clef-server.sh;
             // like MLX on 8090, the gateway never starts it or loads weights.
             guard model == "clef" || model == "mlx/clef" else { throw GatewayFailure(404, "Decision model: clef (MLX, port 8091)") }
-            return GatewayRoute(port: 8091, path: path, source: "clef", model: "clef")
+            return GatewayRoute(port: 8091, path: "/v1/systemone", source: "clef", model: "clef")
         }
         if let model, model.hasPrefix("mlx/") || catalog.mlxIDs.contains(model) || model.hasPrefix("mlx-community/") {
             let raw = model.hasPrefix("mlx/") ? String(model.dropFirst(4)) : model
@@ -367,6 +445,46 @@ final class UnifiedGateway: @unchecked Sendable {
             return GatewayRoute(port: 443, path: path, source: "openai", model: model)
         }
         throw GatewayFailure(404, "Unknown local model ID")
+    }
+
+    /// `/v1/decisions` request `{model, messages, choices: {key: description} | [key]}` → SystemOne body.
+    /// Last user message = the question, earlier messages = the state; `image_url` parts become `images`.
+    static func decisionsRequest(_ object: [String: Any]) throws -> Data {
+        var texts: [(role: String, text: String)] = [], images: [String] = []
+        for message in object["messages"] as? [[String: Any]] ?? [] {
+            var text = message["content"] as? String ?? ""
+            for part in message["content"] as? [[String: Any]] ?? [] {
+                if part["type"] as? String == "image_url", let url = (part["image_url"] as? [String: Any])?["url"] as? String {
+                    images.append(url)
+                } else if let t = part["text"] as? String { text += (text.isEmpty ? "" : "\n") + t }
+            }
+            texts.append((message["role"] as? String ?? "user", text))
+        }
+        guard let last = texts.lastIndex(where: { $0.role == "user" }) else {
+            throw GatewayFailure(400, "`messages` needs a user message holding the question")
+        }
+        let choices = object["choices"]
+        guard (choices as? [String: Any])?.isEmpty == false || (choices as? [String])?.isEmpty == false else {
+            throw GatewayFailure(400, "`choices` must be a non-empty object {key: description} or array of keys")
+        }
+        let state = texts.enumerated().filter { $0.offset != last }.map { "\($0.element.role): \($0.element.text)" }.joined(separator: "\n")
+        var body: [String: Any] = ["model": "clef", "state": state,
+                                   "questions": ["q": ["type": "choice", "instructions": texts[last].text, "criteria": choices!]]]
+        if !images.isEmpty { body["images"] = images }
+        return try JSONSerialization.data(withJSONObject: body)
+    }
+
+    /// SystemOne answer → OpenAI `chat.completion`: `message.content` = chosen key, plus `confidence` and `probabilities`.
+    static func decisionsResponse(_ data: Data) throws -> [String: Any] {
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let answer = (object["answers"] as? [String: Any])?["q"] as? [String: Any],
+              let choice = answer["choice"] as? String else { throw GatewayFailure(502, "Invalid Clef decision response") }
+        let input = (object["usage"] as? [String: Any])?["input_tokens"] as? Int ?? 0
+        return ["id": "chatcmpl-" + UUID().uuidString, "object": "chat.completion", "created": Int(Date().timeIntervalSince1970),
+                "model": object["model"] as? String ?? "clef",
+                "choices": [["index": 0, "message": ["role": "assistant", "content": choice], "finish_reason": "stop"]],
+                "confidence": answer["confidence"] ?? 0, "probabilities": answer["probabilities"] ?? [:],
+                "usage": ["prompt_tokens": input, "completion_tokens": 0, "total_tokens": input]]
     }
 
     /// OpenRouter ids: `…:free` (Ollama tags never use it), `openrouter/…`, or a listed free model.
@@ -439,6 +557,16 @@ final class UnifiedGateway: @unchecked Sendable {
         let all = filteredHeaders(headers, allowCredentials: source == "openai")
         return ["alibaba", "openrouter"].contains(source) || CloudProviders.generic(id: source) != nil
             ? all.filter { $0.key.lowercased() == "accept" } : all
+    }
+
+    /// `Authorization` + `chatgpt-account-id` of the ChatGPT account signed in to Codex (`~/.codex/auth.json`); empty if absent.
+    static func codexAuthHeaders(file: URL) -> [String: String] {
+        guard let data = try? Data(contentsOf: file),
+              let tokens = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["tokens"] as? [String: Any],
+              let access = tokens["access_token"] as? String, !access.isEmpty else { return [:] }
+        var headers = ["Authorization": "Bearer " + access]
+        if let account = tokens["account_id"] as? String, !account.isEmpty { headers["chatgpt-account-id"] = account }
+        return headers
     }
 
     static func filteredHeaders(_ headers: [String: String], allowCredentials: Bool, response: Bool = false) -> [String: String] {
@@ -740,6 +868,19 @@ struct GatewayRequestTelemetry: Codable, Sendable {
     var callKey: String { "\(source)|\(upstreamModel ?? "")" }
 }
 
+/// Where an Alibaba model asked through the gateway is really served, for the memory view and the notice.
+struct GatewayFallback: Codable, Sendable, Equatable {
+    var served: String
+    /// Given up on (spent free quota, unlisted), the model the caller asked for first.
+    var spent: [String]
+    /// Capable models still to try after `served`, best first.
+    var next: [String]
+    var since = Date()
+    var lastUsed = Date()
+    /// An API model has no weights to unload: it leaves the memory view this long after its last request.
+    static let ttl: TimeInterval = 60
+}
+
 private actor GatewayTelemetry {
     static let defaultFile = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/RailRouter/gateway-telemetry.json")
@@ -747,23 +888,37 @@ private actor GatewayTelemetry {
     private var records: [GatewayRequestTelemetry] = []
     /// Appels reçus par modèle (`callKey`) depuis le démarrage du gateway ; `records` n'en garde que 100.
     private var calls: [String: Int] = [:]
+    /// Alibaba model asked → its chain, kept apart from `records`, which other traffic pushes out.
+    private var fallbacks: [String: GatewayFallback] = [:]
     init(file: URL?) { self.file = file }
     func snapshot() -> [GatewayRequestTelemetry] { records }
     func json() -> Data {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .secondsSince1970
         encoder.outputFormatting = .sortedKeys
-        struct Envelope: Encodable { let requests: [GatewayRequestTelemetry]; let calls: [String: Int] }
-        return (try? encoder.encode(Envelope(requests: records, calls: calls))) ?? Data("{\"requests\":[]}".utf8)
+        struct Envelope: Encodable { let requests: [GatewayRequestTelemetry]; let calls: [String: Int]; let fallbacks: [String: GatewayFallback] }
+        return (try? encoder.encode(Envelope(requests: records, calls: calls, fallbacks: fallbacks))) ?? Data("{\"requests\":[]}".utf8)
     }
     func begin(_ record: GatewayRequestTelemetry) {
         calls[record.callKey, default: 0] += 1
         update(record)
     }
+    /// True when `asked` is now served by another model than the last time (or for the first time).
+    func setFallback(_ asked: String, _ state: GatewayFallback) -> Bool {
+        var state = state
+        let previous = fallbacks[asked]
+        if let previous, previous.served.caseInsensitiveCompare(state.served) == .orderedSame { state.since = previous.since }
+        fallbacks[asked] = state
+        persist()
+        return previous?.served.caseInsensitiveCompare(state.served) != .orderedSame
+    }
     func update(_ record: GatewayRequestTelemetry) {
         if let index = records.firstIndex(where: { $0.id == record.id }) { records[index] = record }
         else { records.append(record) }
         if records.count > 100 { records.removeFirst(records.count - 100) }
+        persist()
+    }
+    private func persist() {
         guard let file else { return }
         do {
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -1012,8 +1167,130 @@ enum GatewayAlibaba {
         CloudProviders.apiKey(for: "alibaba", environment: environment, file: keyFile)
     }
 
+    /// Optional free-quota list, one model id per line, best first. Alibaba has no API for the per-account free quota: the ids
+    /// are copied from the console page "Free Quota" (Stop-on-Exhaust enabled there). When the file exists, only these models
+    /// are listed and called; a spent one is dropped from the file and its requests go to the next one (`send`).
+    static var freeQuotaFile: URL { CloudProviders.keyFile.deletingLastPathComponent().appendingPathComponent("alibaba-free-quota.txt") }
+
+    static func freeQuota(file: URL = freeQuotaFile) -> [String]? {
+        (try? String(contentsOf: file, encoding: .utf8))?.split(whereSeparator: \.isWhitespace).map(String.init)
+    }
+
+    /// The asked model when it is listed, else the best listed one doing at least the same job (chat, vision, embedding…).
+    /// ponytail: the job is deduced from the name (`AlibabaService.capabilities`); reorder the file to change the pick.
+    static func freeModel(for asked: String, in list: [String]) -> String? {
+        if let same = list.first(where: { $0.caseInsensitiveCompare(asked) == .orderedSame }) { return same }
+        let needed = Set(AlibabaService.capabilities(id: asked))
+        return list.first { needed.isSubset(of: AlibabaService.capabilities(id: $0)) }
+    }
+
+    private static let dropLock = NSLock()
+
+    static func drop(_ model: String, file: URL = freeQuotaFile) {
+        // Parallel requests drop different models: one rewrite at a time, else one of them comes back.
+        dropLock.lock()
+        defer { dropLock.unlock() }
+        guard let list = freeQuota(file: file) else { return }
+        try? list.filter { $0.caseInsensitiveCompare(model) != .orderedSame }.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+    }
+
+    /// The model cannot serve for free: free quota spent (Stop-on-Exhaust, `AllocationQuota.FreeTierOnly`), pay-as-you-go call
+    /// stopped by the account budget (`BudgetLimitExceeded`; calls served by a free quota are not stopped), or model
+    /// retired / absent from this endpoint. A JSON error, or a `response.failed` event carrying only the message on a
+    /// Responses stream (HTTP 200). ponytail: the "free tier" wording is matched loosely, it was never seen live.
+    static func unusable(_ head: Data, status: Int) -> Bool {
+        let text = String(decoding: head, as: UTF8.self).lowercased()
+        let failed = status >= 400 || text.split(separator: "\n").contains { $0.hasPrefix("event:") && $0.contains("response.failed") }
+        return failed && ["freetieronly", "free tier", "budgetlimitexceeded", "budget configured", "model_not_found", "model_not_supported"].contains { text.contains($0) }
+    }
+
+    /// Hybrid-thinking models turn the effort into a thinking budget and refuse the high ones on a long context
+    /// (`thinking_budget … not greater than 131072`, seen on qwen3.6-plus with Codex's `high`).
+    static func budgetRejected(_ head: Data, status: Int) -> Bool {
+        let text = String(decoding: head, as: UTF8.self).lowercased()
+        let failed = status >= 400 || text.split(separator: "\n").contains { $0.hasPrefix("event:") && $0.contains("response.failed") }
+        return failed && text.contains("thinking_budget")
+    }
+
+    /// The request with a high effort brought down to `medium` (Responses `reasoning.effort` or chat `reasoning_effort`); nil if it has none.
+    static func mediumEffort(_ object: [String: Any]) -> [String: Any]? {
+        let high: Set<String> = ["high", "xhigh", "max", "ultra"]
+        var object = object
+        if var reasoning = object["reasoning"] as? [String: Any], let effort = reasoning["effort"] as? String, high.contains(effort.lowercased()) {
+            reasoning["effort"] = "medium"
+            object["reasoning"] = reasoning
+            return object
+        }
+        if let effort = object["reasoning_effort"] as? String, high.contains(effort.lowercased()) {
+            object["reasoning_effort"] = "medium"
+            return object
+        }
+        return nil
+    }
+
+    /// Start of an answer, read before relaying it: the first SSE event, or a whole error body; nothing for a plain success.
+    static func head(_ bytes: inout URLSession.AsyncBytes.AsyncIterator, response: URLResponse) async throws -> Data {
+        let http = response as? HTTPURLResponse
+        let sse = http?.value(forHTTPHeaderField: "Content-Type")?.lowercased().contains("text/event-stream") == true
+        var head = Data()
+        guard sse || (http?.statusCode ?? 0) >= 400 else { return head }
+        while head.count < 64 * 1024, let byte = try await bytes.next() {
+            head.append(byte)
+            if sse, head.suffix(2) == Data([10, 10]) || head.suffix(4) == Data([13, 10, 13, 10]) { break }
+        }
+        return head
+    }
+
+    /// Chain of `asked`: the model really serving it, the ones given up on, and the capable ones still to try, best first.
+    static func fallback(asked: String, served: String, spent: [String], list: [String]) -> GatewayFallback {
+        let needed = Set(AlibabaService.capabilities(id: asked))
+        let capable = list.filter { needed.isSubset(of: AlibabaService.capabilities(id: $0)) }
+        var seen = Set<String>()
+        return GatewayFallback(served: served, spent: spent.filter { seen.insert($0.lowercased()).inserted },
+                               next: Array(capable.drop { $0.caseInsensitiveCompare(served) != .orderedSame }.dropFirst()))
+    }
+
+    /// macOS banner from the headless service; the text goes in as arguments, never into the script.
+    @Sendable static func notify(title: String, body: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", "on run argv", "-e", "display notification (item 1 of argv) with title (item 2 of argv)", "-e", "end run", body, title]
+        try? process.run()
+    }
+
+    /// Sends a request whose body names a listed model. While Alibaba answers that this model cannot serve for free,
+    /// the model is dropped from the list and the request replayed on the next one able to serve `asked`.
+    static func send(_ request: URLRequest, asked: String, file: URL = freeQuotaFile, session: URLSession) async throws
+        -> (bytes: URLSession.AsyncBytes, response: URLResponse, rest: URLSession.AsyncBytes.AsyncIterator, head: Data, served: String, tried: [String]) {
+        var request = request, tried: [String] = []
+        while true {
+            let (bytes, response) = try await session.bytes(for: request, delegate: GatewayNoRedirect())
+            var rest = bytes.makeAsyncIterator()
+            let head = try await head(&rest, response: response)
+            let current = (request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) }) as? [String: Any]
+            if let current, budgetRejected(head, status: (response as? HTTPURLResponse)?.statusCode ?? 0), let lowered = mediumEffort(current) {
+                bytes.task.cancel()
+                request.httpBody = try JSONSerialization.data(withJSONObject: lowered)
+                continue
+            }
+            guard unusable(head, status: (response as? HTTPURLResponse)?.statusCode ?? 0),
+                  var object = current, let spent = object["model"] as? String else {
+                return (bytes, response, rest, head, current?["model"] as? String ?? asked, tried)
+            }
+            drop(spent, file: file)
+            tried.append(spent)
+            // Nothing left: the client gets Alibaba's own error. `tried` ends the loop even if the file cannot be rewritten.
+            guard let next = freeQuota(file: file).flatMap({ list in freeModel(for: asked, in: list.filter { !tried.contains($0) }) })
+            else { return (bytes, response, rest, head, spent, tried) }
+            bytes.task.cancel()
+            object["model"] = next
+            request.httpBody = try JSONSerialization.data(withJSONObject: object)
+        }
+    }
+
     /// `data` of `GET …/v1/models` (id, created, owned_by only); empty without a key or on any failure.
-    static func entries(session: URLSession) async -> [[String: Any]] {
+    /// With a free-quota list: only its models, plus `auto`, a stable id always served by the best one left.
+    static func entries(session: URLSession, freeQuotaFile: URL = freeQuotaFile) async -> [[String: Any]] {
         guard let key = apiKey(), let url = URL(string: baseURL() + "/v1/models") else { return [] }
         var request = URLRequest(url: url)
         request.timeoutInterval = 4
@@ -1022,11 +1299,14 @@ enum GatewayAlibaba {
         guard let (data, response) = try? await session.data(for: request, delegate: GatewayNoRedirect()),
               (response as? HTTPURLResponse)?.statusCode == 200, data.count <= 8 * 1024 * 1024,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
-        return json["data"] as? [[String: Any]] ?? []
+        let models = json["data"] as? [[String: Any]] ?? []
+        guard let free = freeQuota(file: freeQuotaFile) else { return models }
+        return (free.isEmpty ? [] : [["id": "auto"]])
+            + models.filter { item in free.contains { $0.caseInsensitiveCompare(item["id"] as? String ?? "") == .orderedSame } }
     }
 
-    static func catalog(session: URLSession) async -> [String: Any] {
-        ["data": await entries(session: session).compactMap { item -> [String: Any]? in
+    static func catalog(session: URLSession, freeQuotaFile: URL = freeQuotaFile) async -> [String: Any] {
+        ["data": await entries(session: session, freeQuotaFile: freeQuotaFile).compactMap { item -> [String: Any]? in
             guard let id = item["id"] as? String else { return nil }
             return ["id": id, "created": item["created"] as Any, "owned_by": "alibaba"]
         }]
