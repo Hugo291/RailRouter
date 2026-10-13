@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="RailRouter/Assets.xcassets/AppIcon.appiconset/icon_512.png" width="128" alt="RailRouter">
+</p>
+
 # RailRouter 🚂
 
 **A local LLM switchyard for macOS.** One native app to see every model on your Mac
