@@ -58,8 +58,23 @@ actor MLXProcessMonitor {
             instances.append(instance)
         }
 
-        // 2. Fichiers .safetensors ouverts (lsof) — hors moteurs, hors doublons.
         let lsof = ProcessScanner.lsofMLX()
+        // 1bis. stable-diffusion.cpp (sd-cli / sd-server) : lancé par la route /v1/images/generations ou par qwen-image.sh.
+        // Avant l'étape 2 : le VAE .safetensors ouvert pendant le chargement ne doit pas en faire un « modèle MLX » nommé « vae ».
+        for proc in ProcessScanner.scanStableDiffusionProcesses(in: all, dylibPIDs: lsof.sdPIDs) where !enginePids.contains(proc.pid) {
+            var instance = ModelInstance(
+                modelName: Self.stableDiffusionName(from: proc.commandLine),
+                engine: .mlxDirect,
+                ram_MB: ProcessScanner.footprintMB(pid: proc.pid) ?? proc.ramUsage_MB,
+                pid: proc.pid,
+                loadedAt: Date(),
+                status: .active
+            )
+            instance.typeLabel = "image"
+            instances.append(instance)
+        }
+
+        // 2. Fichiers .safetensors ouverts (lsof) — hors moteurs, hors doublons.
         for entry in lsof.safetensors {
             guard !enginePids.contains(entry.pid) else { continue }
             if instances.contains(where: { $0.pid == entry.pid }) { continue }
@@ -147,6 +162,20 @@ actor MLXProcessMonitor {
         guard command.contains("mlx_vlm.server") || command.contains("mlx_lm.server"),
               let text = argument("--port", in: command), let port = UInt16(text), port > 0 else { return nil }
         return URL(string: "http://127.0.0.1:\(port)/v1")
+    }
+
+    /// Nom d'un processus stable-diffusion.cpp : `--diffusion-model` (ou `-m` / `--model`). Rangé sous
+    /// `~/.lmstudio/models/<éditeur>/<dépôt>/`, c'est l'id LM Studio de `/v1/models` (le dépôt en minuscules) ;
+    /// ailleurs, le nom du fichier sans extension ; sans modèle dans la ligne, l'exécutable.
+    static func stableDiffusionName(from commandLine: String) -> String {
+        guard let path = argument("--diffusion-model", in: commandLine) ?? argument("--model", in: commandLine) ?? argument("-m", in: commandLine) else {
+            return ((commandLine.split(separator: " ").first.map(String.init) ?? "sd.cpp") as NSString).lastPathComponent
+        }
+        let parts = (path as NSString).pathComponents
+        if let models = parts.firstIndex(of: "models"), models > 0, parts[models - 1] == ".lmstudio", models + 3 < parts.count {
+            return parts[models + 2].lowercased()
+        }
+        return ((path as NSString).lastPathComponent as NSString).deletingPathExtension
     }
 
     /// Termination d'un processus MLX direct (éjection).

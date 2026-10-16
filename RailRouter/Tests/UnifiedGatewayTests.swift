@@ -399,6 +399,78 @@ struct UnifiedGatewayTests {
         let paidChain = ((try JSONSerialization.jsonObject(with: try await call("/telemetry").0) as? [String: Any])?["fallbacks"] as? [String: [String: Any]])?["Free-Chat"]
         check(paidChain?["served"] as? String == "Free-Chat" && (paidChain?["spent"] as? [String])?.isEmpty == true
               && (paidChain?["next"] as? [String])?.isEmpty == true, "Chain published without a free-quota list")
+
+        // POST /v1/images/generations: validation, sd-cli arguments, and the real route driving a fake sd-cli (never the model).
+        func imageFailure(_ object: [String: Any]) -> Int? { do { _ = try GatewayImageJob(object); return nil } catch { return (error as? GatewayFailure)?.status } }
+        let id = GatewayImageEngine.modelID
+        let imageJob = try GatewayImageJob(["model": id, "prompt": "un train", "size": "768x512", "n": 2, "seed": 7])
+        check((imageJob.width, imageJob.height, imageJob.count, imageJob.steps, imageJob.seed) == (768, 512, 2, 20, 7), "Image job: size, n, seed parsed, steps default 20")
+        let imageDefaults = try GatewayImageJob(["model": id, "prompt": "p"])
+        check((imageDefaults.width, imageDefaults.height, imageDefaults.count, imageDefaults.seed) == (1024, 1024, 1, -1), "Image job defaults: 1024x1024, one image, random seed")
+        check(imageFailure(["model": "other", "prompt": "p"]) == 404 && imageFailure(["model": id]) == 400 && imageFailure(["model": id, "prompt": ""]) == 400
+              && imageFailure(["model": id, "prompt": "p", "size": "1000x1000"]) == 400 && imageFailure(["model": id, "prompt": "p", "size": "4096x4096"]) == 400
+              && imageFailure(["model": id, "prompt": "p", "n": 5]) == 400 && imageFailure(["model": id, "prompt": "p", "steps": "20"]) == 400
+              && imageFailure(["model": id, "prompt": "p", "response_format": "url"]) == 400 && imageFailure(["model": id, "prompt": "p", "size": "auto"]) == nil, "Image job rejects unknown model, empty prompt, bad size, n, steps and url format")
+        let realEngine = GatewayImageEngine.standard(home: URL(fileURLWithPath: "/home"))
+        let sdArguments = realEngine.arguments(imageJob, output: URL(fileURLWithPath: "/out/image.png"))
+        func argument(_ flag: String) -> String? { sdArguments.firstIndex(of: flag).map { sdArguments[$0 + 1] } }
+        check(argument("-W") == "768" && argument("-H") == "512" && argument("-b") == "2" && argument("-s") == "7" && argument("-p") == "un train" && argument("-o") == "/out/image.png"
+              && argument("--diffusion-model")?.hasSuffix("qwen-image-2.1-UC-Q8_0.gguf") == true && argument("--llm")?.hasSuffix("Qwen3-VL-8B-Instruct-Q8_0.gguf") == true, "sd-cli arguments match qwen-image.sh")
+        let sdFiles = ["diffusion.gguf", "vae.safetensors", "llm.gguf"].map { directory.appendingPathComponent($0) }
+        for file in sdFiles { try Data().write(to: file) }
+        let argsFile = directory.appendingPathComponent("sd-args.txt"), pidFile = directory.appendingPathComponent("sd-pid.txt")
+        func fakeSD(_ name: String, _ body: String, timeout: TimeInterval = 1) throws -> GatewayImageEngine {
+            let script = directory.appendingPathComponent(name)
+            try ("#!/bin/sh\nwhile [ $# -gt 0 ]; do case \"$1\" in -o) out=\"$2\";; -b) n=\"$2\";; esac; printf '%s\\n' \"$1\" >> '\(argsFile.path)'; shift; done\n" + body).write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+            return GatewayImageEngine(executable: script, diffusion: sdFiles[0], vae: sdFiles[1], llm: sdFiles[2], timeout: timeout)
+        }
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        let writer = "i=0; while [ $i -lt $n ]; do f=\"$out\"; [ $n -gt 1 ] && f=\"${out%.png}_$i.png\"; echo \(png) | base64 -d > \"$f\"; i=$((i+1)); done\n"
+        paid.stop()
+        func imageGateway(_ engine: GatewayImageEngine) throws -> UnifiedGateway {
+            let candidate = UnifiedGateway(port: port, session: upstreamSession, telemetryFile: nil, imageEngine: engine)
+            try candidate.start()
+            return candidate
+        }
+        let imaging = try imageGateway(try fakeSD("sd-ok", writer))
+        let imageBody = Data(#"{"model":"qwen-image-2.1-uncensored-quantized","prompt":"un train à vapeur","size":"768x768","n":2}"#.utf8)
+        let generated = try await call("/v1/images/generations", body: imageBody)
+        let generatedData = (try? JSONSerialization.jsonObject(with: generated.0) as? [String: Any])?["data"] as? [[String: Any]] ?? []
+        check(generated.1.statusCode == 200 && generatedData.count == 2 && generatedData.allSatisfy { (Data(base64Encoded: $0["b64_json"] as? String ?? "")?.prefix(4)).map { Array($0) } == [0x89, 0x50, 0x4E, 0x47] },
+              "Image route answers OpenAI data[].b64_json, one PNG per n")
+        let sdSeen = (try? String(contentsOf: argsFile, encoding: .utf8)) ?? ""
+        check(sdSeen.contains("un train à vapeur") && sdSeen.contains("768") && sdSeen.contains(sdFiles[0].path), "Fake sd-cli received the prompt, size and weights")
+        check((try await call("/v1/images/generations", body: Data(#"{"model":"nope","prompt":"p"}"#.utf8))).1.statusCode == 404, "Image route: unknown model HTTP 404")
+        let imageTelemetry = try JSONSerialization.jsonObject(with: try await call("/telemetry").0) as? [String: Any]
+        check((imageTelemetry?["requests"] as? [[String: Any]])?.contains { $0["path"] as? String == "/v1/images/generations" && $0["phase"] as? String == "completed" && $0["source"] as? String == "sd-cpp" } == true, "Image generation recorded in telemetry")
+        imaging.stop()
+        let turnsFile = directory.appendingPathComponent("sd-turns.txt")
+        let serial = try imageGateway(try fakeSD("sd-serial", "echo start >> '\(turnsFile.path)'\nsleep 0.5\necho end >> '\(turnsFile.path)'\n" + writer))
+        async let firstTurn = call("/v1/images/generations", body: imageBody)
+        async let secondTurn = call("/v1/images/generations", body: imageBody)
+        let turnStatuses = try await [firstTurn.1.statusCode, secondTurn.1.statusCode]
+        check(turnStatuses == [200, 200] && (try? String(contentsOf: turnsFile, encoding: .utf8)) == "start\nend\nstart\nend\n", "Two image requests run one after the other")
+        serial.stop()
+        let broken = try imageGateway(try fakeSD("sd-fail", "echo boom >&2\nexit 3\n"))
+        let failed = try await call("/v1/images/generations", body: imageBody)
+        check(failed.1.statusCode == 502 && String(decoding: failed.0, as: UTF8.self).contains("boom"), "sd-cli failure HTTP 502 with its log tail")
+        broken.stop()
+        let slow = try imageGateway(try fakeSD("sd-slow", "echo $$ > '\(pidFile.path)'\nexec sleep 30\n"))
+        let timedOut = Date()
+        let killed = try await call("/v1/images/generations", body: imageBody)
+        check(killed.1.statusCode == 502 && Date().timeIntervalSince(timedOut) < 4, "sd-cli past the timeout is killed")
+        slow.stop()
+        let hanging = try imageGateway(try fakeSD("sd-hang", "echo $$ > '\(pidFile.path)'\nexec sleep 30\n", timeout: 60))
+        try? FileManager.default.removeItem(at: pidFile)
+        let pending = Task { try await call("/v1/images/generations", body: imageBody) }
+        try await Task.sleep(for: .milliseconds(400))
+        pending.cancel() // client gone: the child must not keep the GPU busy
+        let child = Int32((try? String(contentsOf: pidFile, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "") ?? 0
+        var alive = true
+        for _ in 0..<30 where alive { try await Task.sleep(for: .milliseconds(100)); alive = child > 0 && kill(child, 0) == 0 }
+        check(child > 0 && !alive, "Client disconnect terminates sd-cli")
+        hanging.stop()
         return (checks, failures)
     }
 }

@@ -69,20 +69,31 @@ actor ProcessScanner {
         }
     }
 
+    /// stable-diffusion.cpp (`sd-cli`, `sd-server`) : l'exécutable, ou toute bibliothèque `libstable-diffusion.dylib` chargée
+    /// (`dylibPIDs`, via lsof). Ni Python ni « mlx » dans la ligne de commande : `scanMLXProcesses` ne les voit pas.
+    static func scanStableDiffusionProcesses(in all: [MLXProcessInfo], dylibPIDs: Set<Int> = []) -> [MLXProcessInfo] {
+        let selfPID = Int(ProcessInfo.processInfo.processIdentifier)
+        return all.filter { info in
+            guard info.pid != selfPID else { return false }
+            let exe = ((info.commandLine.split(separator: " ").first.map(String.init) ?? "") as NSString).lastPathComponent
+            return ["sd-cli", "sd-server"].contains(exe) || dylibPIDs.contains(info.pid)
+        }
+    }
+
     /// Une passe `lsof` : fichiers .safetensors encore ouverts, et processus qui ont
-    /// chargé `libmlx.dylib`. MLX lit les poids puis ferme les fichiers : un script
+    /// chargé `libmlx.dylib` (ou `libstable-diffusion.dylib`, sd.cpp). MLX lit les poids puis ferme les fichiers : un script
     /// Python qui importe mlx (`python bench.py`) n'a ni preuve dans sa ligne de
     /// commande ni .safetensors ouvert une fois chargé — seule la bibliothèque reste
     /// mappée (Clef 27B via mlx-vlm, 09/10/2026).
-    static func lsofMLX() -> (safetensors: [SafetensorsEntry], mlxPIDs: Set<Int>) {
-        guard let output = run("/usr/sbin/lsof", ["-w", "-Fn"]) else { return ([], []) }
+    static func lsofMLX() -> (safetensors: [SafetensorsEntry], mlxPIDs: Set<Int>, sdPIDs: Set<Int>) {
+        guard let output = run("/usr/sbin/lsof", ["-w", "-Fn"]) else { return ([], [], []) }
         return parseLsof(output, selfPID: Int(ProcessInfo.processInfo.processIdentifier))
     }
 
     /// Décode la sortie `lsof -Fn` (internal : tests unitaires).
-    static func parseLsof(_ output: String, selfPID: Int) -> (safetensors: [SafetensorsEntry], mlxPIDs: Set<Int>) {
+    static func parseLsof(_ output: String, selfPID: Int) -> (safetensors: [SafetensorsEntry], mlxPIDs: Set<Int>, sdPIDs: Set<Int>) {
         var safetensors: [SafetensorsEntry] = []
-        var mlxPIDs = Set<Int>()
+        var mlxPIDs = Set<Int>(), sdPIDs = Set<Int>()
         var currentPID: Int? = nil
         for line in output.split(whereSeparator: \.isNewline) {
             guard let first = line.first else { continue }
@@ -93,9 +104,11 @@ actor ProcessScanner {
                 safetensors.append(SafetensorsEntry(pid: pid, filePath: path))
             } else if path.hasSuffix("/libmlx.dylib") {
                 mlxPIDs.insert(pid)
+            } else if path.hasSuffix("/libstable-diffusion.dylib") {
+                sdPIDs.insert(pid)
             }
         }
-        return (safetensors, mlxPIDs)
+        return (safetensors, mlxPIDs, sdPIDs)
     }
 
     /// Empreinte physique en Mo, celle du Moniteur d'activité. La RSS de `ps` ignore

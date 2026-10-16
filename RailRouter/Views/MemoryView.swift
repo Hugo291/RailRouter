@@ -282,6 +282,7 @@ struct LoadedModelCard: View {
     private var typeIcon: String {
         switch instance.typeLabel {
         case "vlm": return "eye"
+        case "image": return "photo"
         case "embedding", "embeddings": return "point.3.connected.trianglepath.dotted"
         default: return "text.bubble"
         }

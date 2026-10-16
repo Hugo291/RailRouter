@@ -19,6 +19,8 @@ final class UnifiedGateway: @unchecked Sendable {
     private let fallbackNotice: (@Sendable (String, String) -> Void)?
     private let metadataCache = GatewayMetadataCache()
     private let residencyGate = GatewayResidencyGate()
+    private let imageEngine: GatewayImageEngine
+    private let imageGate = GatewayImageGate()
     private var listener: NWListener?
     private var peers: [UUID: GatewayPeer] = [:] // queue-owned
 
@@ -31,6 +33,7 @@ final class UnifiedGateway: @unchecked Sendable {
         alibabaFreeQuotaFile = GatewayAlibaba.freeQuotaFile
         fallbackNotice = GatewayAlibaba.notify
         mlxActivityFile = GatewayMLXActivity.defaultFile
+        imageEngine = .standard()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpShouldSetCookies = false
         configuration.httpCookieStorage = nil
@@ -46,8 +49,9 @@ final class UnifiedGateway: @unchecked Sendable {
     /// Test seam: an ephemeral session with URLProtocol fixtures; never a model call.
     init(port: UInt16, session: URLSession, telemetryFile: URL?, providerEnvironment: [String: String] = [:], codexAuthFile: URL? = nil,
          alibabaFreeQuotaFile: URL = URL(fileURLWithPath: "/nonexistent/alibaba-free-quota.txt"),
-         fallbackNotice: (@Sendable (String, String) -> Void)? = nil) {
+         fallbackNotice: (@Sendable (String, String) -> Void)? = nil, imageEngine: GatewayImageEngine = .standard(home: URL(fileURLWithPath: "/nonexistent"))) {
         self.port = port
+        self.imageEngine = imageEngine
         self.session = session
         openAICatalogFile = nil
         self.codexAuthFile = codexAuthFile
@@ -334,6 +338,26 @@ final class UnifiedGateway: @unchecked Sendable {
                 record?.promptTokens = usage.promptTokens
                 record?.completionTokens = usage.completionTokens
                 record?.phase = response.statusCode < 400 ? "completed" : "failed"
+                record?.finishedAt = Date()
+                await telemetry.update(record!)
+            case ("POST", "/v1/images/generations"):
+                let decodedBody = try GatewayZstd.decode(request.body, encoding: request.headers["content-encoding"])
+                guard let object = (try? JSONSerialization.jsonObject(with: decodedBody)) as? [String: Any] else {
+                    throw GatewayFailure(400, "Expected a JSON object")
+                }
+                let job = try GatewayImageJob(object)
+                record = GatewayRequestTelemetry(id: peer.id, path: request.path, model: GatewayImageEngine.modelID, upstreamModel: GatewayImageEngine.modelID, source: "sd-cpp")
+                await telemetry.begin(record!)
+                // One generation at a time: each loads ~17 GB of weights, so concurrent requests wait their turn.
+                await imageGate.acquire()
+                defer { Task { await imageGate.release() } }
+                try Task.checkCancellation()
+                record?.phase = "generating"
+                await telemetry.update(record!)
+                let images = try await imageEngine.generate(job)
+                try await peer.json(["created": Int(Date().timeIntervalSince1970), "data": images.map { ["b64_json": $0.base64EncodedString()] }])
+                record?.status = 200
+                record?.phase = "completed"
                 record?.finishedAt = Date()
                 await telemetry.update(record!)
             default: throw GatewayFailure(404, "Unknown gateway endpoint")
@@ -645,6 +669,7 @@ struct GatewayCatalog {
                                                 "source": source, "upstreamModel": raw, "gateway_source": source, "gateway_sources": [sourceInfo]]
                     if let created = item["created"] as? NSNumber { model["created"] = created }
                     if source == "mlx" { model["gateway_paths"] = mlxPaths.sorted() }
+                    if source == "lmStudio", raw == GatewayImageEngine.modelID { model["gateway_paths"] = ["/v1/images/generations"] }
                     positions[id] = models.count
                     models.append(model)
                 }
@@ -1310,5 +1335,116 @@ enum GatewayAlibaba {
             guard let id = item["id"] as? String else { return nil }
             return ["id": id, "created": item["created"] as Any, "owned_by": "alibaba"]
         }]
+    }
+}
+
+/// `POST /v1/images/generations` body, validated: OpenAI fields (`prompt`, `n`, `size`) plus `seed`, `steps`, `negative_prompt`.
+struct GatewayImageJob: Sendable {
+    var prompt: String
+    var negative = ""
+    var width = 1024, height = 1024
+    var count = 1, steps = 20, seed = -1
+
+    init(_ object: [String: Any]) throws {
+        guard object["model"] as? String == GatewayImageEngine.modelID else {
+            throw GatewayFailure(404, "Image model: \(GatewayImageEngine.modelID)")
+        }
+        guard let prompt = object["prompt"] as? String, !prompt.isEmpty, prompt.utf8.count <= 32 * 1024 else {
+            throw GatewayFailure(400, "`prompt` is required (at most 32 KiB)")
+        }
+        self.prompt = prompt
+        if let negative = object["negative_prompt"] as? String { self.negative = negative }
+        func integer(_ key: String, _ range: ClosedRange<Int>, _ fallback: Int) throws -> Int {
+            guard let raw = object[key], !(raw is NSNull) else { return fallback }
+            guard let value = raw as? Int, range.contains(value) else { throw GatewayFailure(400, "`\(key)` must be an integer in \(range)") }
+            return value
+        }
+        count = try integer("n", 1...4, 1)
+        steps = try integer("steps", 1...100, 20)
+        seed = try integer("seed", -1...4_294_967_295, -1)
+        if let format = object["response_format"] as? String, format != "b64_json" {
+            throw GatewayFailure(400, "Only response_format b64_json is supported")
+        }
+        if let size = object["size"] as? String, size != "auto" {
+            let sides = size.split(separator: "x").compactMap { Int($0) }
+            guard sides.count == 2, sides.allSatisfy({ (256...2048).contains($0) && $0 % 32 == 0 }) else {
+                throw GatewayFailure(400, "`size` must be WIDTHxHEIGHT, each side a multiple of 32 between 256 and 2048")
+            }
+            (width, height) = (sides[0], sides[1])
+        }
+    }
+}
+
+/// stable-diffusion.cpp (`sd-cli`) with Qwen-Image-2.1 Uncensored (GGUF Q8_0), same files and flags as
+/// ~/.ai/skills/use-mlx/scripts/qwen-image.sh. The gateway runs it as a child process and never loads weights itself.
+struct GatewayImageEngine: Sendable {
+    static let modelID = "qwen-image-2.1-uncensored-quantized"
+    var executable: URL, diffusion: URL, vae: URL, llm: URL
+    /// ~250 s for 768², several times that at 1024²; the child is killed past this.
+    var timeout: TimeInterval = 3600
+
+    static func standard(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Self {
+        let models = home.appendingPathComponent(".lmstudio/models")
+        return Self(executable: home.appendingPathComponent(".local/bin/sd-cli"),
+                    diffusion: models.appendingPathComponent("abenzerps/Qwen-Image-2.1-Uncensored-Quantized/qwen-image-2.1-UC-Q8_0.gguf"),
+                    vae: models.appendingPathComponent("abenzerps/Qwen-Image-2.1-Uncensored-Quantized/vae/qwen_image_2.1_vae_bf16.safetensors"),
+                    llm: models.appendingPathComponent("lmstudio-community/Qwen3-VL-8B-Instruct-GGUF/Qwen3-VL-8B-Instruct-Q8_0.gguf"))
+    }
+
+    func arguments(_ job: GatewayImageJob, output: URL) -> [String] {
+        ["--diffusion-model", diffusion.path, "--vae", vae.path, "--llm", llm.path,
+         "-p", job.prompt, "-n", job.negative, "-W", String(job.width), "-H", String(job.height), "--steps", String(job.steps),
+         "--cfg-scale", "4", "--sampling-method", "euler", "-s", String(job.seed), "-b", String(job.count), "-o", output.path]
+    }
+
+    /// PNG bytes, one per image (`n`). Cancelling the task (client gone) terminates the child.
+    func generate(_ job: GatewayImageJob) async throws -> [Data] {
+        for file in [executable, diffusion, vae, llm] where !FileManager.default.isReadableFile(atPath: file.path) {
+            throw GatewayFailure(503, "Image engine file missing: \(file.path)")
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("railrouter-image-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let log = directory.appendingPathComponent("sd-cli.log")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+        let logHandle = try FileHandle(forWritingTo: log)
+        defer { try? logHandle.close() }
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = arguments(job, output: directory.appendingPathComponent("image.png"))
+        process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+        process.standardOutput = logHandle
+        process.standardError = logHandle
+        let timer = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
+        defer { timer.cancel() }
+        let status = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int32, Error>) in
+                process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
+                do { try process.run() } catch { continuation.resume(throwing: error); return }
+                if Task.isCancelled { process.terminate() } // cancelled before the child existed
+            }
+        } onCancel: { if process.isRunning { process.terminate() } }
+        try Task.checkCancellation()
+        let images = ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "png" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        guard status == 0, images.count == job.count else {
+            let tail = ((try? String(contentsOf: log, encoding: .utf8)) ?? "").suffix(400)
+            throw GatewayFailure(502, "sd-cli exit \(status), \(images.count)/\(job.count) images: \(tail)")
+        }
+        return try images.map { try Data(contentsOf: $0) }
+    }
+}
+
+/// FIFO mutex: a second image request waits for the first instead of loading the weights twice.
+actor GatewayImageGate {
+    private var busy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    func acquire() async {
+        if !busy { busy = true; return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+    func release() {
+        if waiters.isEmpty { busy = false } else { waiters.removeFirst().resume() }
     }
 }

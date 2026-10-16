@@ -4,8 +4,8 @@ import Foundation
 /// Proxy phases describe transport, not percentage-of-prompt inference progress.
 enum GatewayActivity {
     static func apply(_ requests: [GatewayRequestTelemetry], calls: [String: Int] = [:], to instances: inout [ModelInstance], now: Date = .now) {
-        // "clef" : modèle de décision Clef, serveur MLX direct sur 8091 (route /v1/systemone).
-        let sources: [LLMModel.ModelSource: [String]] = [.mlxDirect: ["mlx", "clef"], .ollama: ["ollama"], .lmStudio: ["lmStudio"]]
+        // "clef" : modèle de décision Clef, serveur MLX direct sur 8091 (route /v1/systemone). "sd-cpp" : sd-cli lancé par /v1/images/generations.
+        let sources: [LLMModel.ModelSource: [String]] = [.mlxDirect: ["mlx", "clef", "sd-cpp"], .ollama: ["ollama"], .lmStudio: ["lmStudio"]]
         for index in instances.indices {
             let name = instances[index].modelName
             guard let source = sources[instances[index].engine],
